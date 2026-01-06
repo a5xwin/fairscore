@@ -7,12 +7,17 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import shap
 import lime
 import lime.lime_tabular
+import joblib
+import os
 import warnings
 warnings.filterwarnings('ignore')
 
 print("Libraries imported successfully!")
 
-df = pd.read_csv('../dataset/credit_data.csv')
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(script_dir)
+
+df = pd.read_csv(os.path.join(project_dir, 'dataset', 'credit_data.csv'))
 
 print(f"Dataset shape: {df.shape}")
 print(f"\nColumn names:\n{df.columns.tolist()}")
@@ -63,6 +68,13 @@ rf_model = RandomForestRegressor(
 print("\nTraining Random Forest model...")
 rf_model.fit(X_train, y_train)
 print("Model training completed!")
+
+joblib.dump(rf_model, os.path.join(script_dir, 'random_forest_model.joblib'))
+print(f"Model saved to '{os.path.join(script_dir, 'random_forest_model.joblib')}'")
+
+joblib.dump(label_encoders, os.path.join(script_dir, 'label_encoders.joblib'))
+print(f"Label encoders saved to '{os.path.join(script_dir, 'label_encoders.joblib')}'")
+
 
 y_pred_train = rf_model.predict(X_train)
 y_pred_test = rf_model.predict(X_test)
