@@ -1,0 +1,105 @@
+import React from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import {
+    LayoutDashboard,
+    CreditCard,
+    FileText,
+    Users,
+    LogOut,
+    Settings,
+    Menu,
+    X
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+
+const Layout = ({ children }: { children: React.ReactNode }) => {
+    const { user, logout } = useAuth();
+    const location = useLocation();
+    const [isMobileOpen, setIsMobileOpen] = React.useState(false);
+
+    if (!user) return null;
+
+    const borrowerLinks = [
+        { title: 'Dashboard', href: '/borrower/dashboard', icon: LayoutDashboard },
+        { title: 'Credit Check', href: '/borrower/credit-check', icon: CreditCard },
+        { title: 'Apply Loan', href: '/borrower/apply', icon: FileText },
+        { title: 'My Loans', href: '/borrower/loans', icon: FileText },
+        { title: 'Settings', href: '/borrower/settings', icon: Settings },
+    ];
+
+    const lenderLinks = [
+        { title: 'Dashboard', href: '/lender/dashboard', icon: LayoutDashboard },
+        { title: 'Borrowers', href: '/lender/borrowers', icon: Users },
+        { title: 'Review Loans', href: '/lender/reviews', icon: FileText },
+        { title: 'Settings', href: '/lender/settings', icon: Settings },
+    ];
+
+    const links = user.role === 'borrower' ? borrowerLinks : lenderLinks;
+
+    const SidebarContent = () => (
+        <div className="flex h-full flex-col gap-4 py-4">
+            <div className="px-6 flex items-center gap-2">
+                <div className="h-8 w-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                    <span className="font-bold text-primary">FS</span>
+                </div>
+                <span className="text-xl font-bold tracking-tight">FairScore</span>
+            </div>
+            <div className="flex-1 px-4 mt-6">
+                <nav className="grid gap-2">
+                    {links.map((link) => (
+                        <Link
+                            key={link.title}
+                            to={link.href}
+                            onClick={() => setIsMobileOpen(false)}
+                            className={cn(
+                                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all hover:bg-accent hover:text-accent-foreground",
+                                location.pathname === link.href ? "bg-accent/80 text-accent-foreground" : "text-muted-foreground"
+                            )}
+                        >
+                            <link.icon className="h-4 w-4" />
+                            {link.title}
+                        </Link>
+                    ))}
+                </nav>
+            </div>
+            <div className="px-4 mt-auto">
+                <Button variant="ghost" className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive" onClick={logout}>
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                </Button>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="grid min-h-screen w-full lg:grid-cols-[280px_1fr]">
+            <div className="hidden border-r bg-muted/40 lg:block">
+                <SidebarContent />
+            </div>
+            <div className="flex flex-col">
+                <header className="flex h-14 items-center gap-4 border-b bg-muted/40 px-6 lg:hidden">
+                    <Sheet open={isMobileOpen} onOpenChange={setIsMobileOpen}>
+                        <SheetTrigger asChild>
+                            <Button variant="outline" size="icon" className="shrink-0">
+                                <Menu className="h-5 w-5" />
+                                <span className="sr-only">Toggle navigation menu</span>
+                            </Button>
+                        </SheetTrigger>
+                        <SheetContent side="left" className="flex flex-col p-0 w-64">
+                            <SidebarContent />
+                        </SheetContent>
+                    </Sheet>
+                    <div className="font-semibold">FairScore</div>
+                </header>
+                <main className="flex-1 p-6 lg:p-8">
+                    {children}
+                </main>
+            </div>
+        </div>
+    );
+};
+
+export default Layout;
