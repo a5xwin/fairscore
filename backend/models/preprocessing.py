@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from imblearn.combine import SMOTEENN
 import os
+import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -38,6 +39,10 @@ for col in categorical_cols:
     le = LabelEncoder()
     X_encoded[col] = le.fit_transform(X_encoded[col].astype(str))
     label_encoders[col] = le
+
+# Save label encoders
+joblib.dump(label_encoders, os.path.join(script_dir, 'label_encoders.joblib'))
+print(f"Label encoders saved to: {os.path.join(script_dir, 'label_encoders.joblib')}")
 
 print("Categorical variables encoded successfully!")
 
