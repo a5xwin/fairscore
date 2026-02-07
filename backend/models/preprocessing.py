@@ -1,11 +1,14 @@
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from imblearn.combine import SMOTEENN
 import os
 import joblib
 import warnings
 warnings.filterwarnings('ignore')
+
+# Import safe encoder to handle unknown values during inference
+from safe_encoders import SafeLabelEncoder
 
 print("Starting data preprocessing with SMOTE-ENN...")
 
@@ -28,7 +31,8 @@ y = df['Credit Score'].astype(int)
 # Store original column names for later
 original_columns = X.columns.tolist()
 
-# Encode categorical variables
+# Encode categorical variables using SafeLabelEncoder
+# This encoder handles unseen values during inference instead of crashing
 categorical_cols = X.select_dtypes(include=['object']).columns.tolist()
 print(f"Categorical columns: {categorical_cols}")
 
@@ -36,9 +40,10 @@ label_encoders = {}
 X_encoded = X.copy()
 
 for col in categorical_cols:
-    le = LabelEncoder()
+    le = SafeLabelEncoder(unknown_value=-1)  # Unknown values get -1
     X_encoded[col] = le.fit_transform(X_encoded[col].astype(str))
     label_encoders[col] = le
+    print(f"  {col}: {len(le.classes_)} unique values. Unknown values will be encoded as -1")
 
 # Save label encoders
 joblib.dump(label_encoders, os.path.join(script_dir, 'label_encoders.joblib'))

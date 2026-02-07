@@ -71,3 +71,48 @@ The modified script now:
 
 - `backend/dataset/credit_data_preprocessed.csv` - Preprocessed dataset
 - `backend/models/random_forest_model.joblib` - Trained model
+- `backend/models/label_encoders.joblib` - Saved encoders (now handles unknown values)
+
+## Handling Unknown Categorical Values ⭐ NEW
+
+The preprocessing pipeline now safely handles **unseen categorical values** that appear during inference (prediction on new data).
+
+### What's New?
+- Uses `SafeLabelEncoder` instead of standard `LabelEncoder`
+- Unknown values are encoded as `-1` instead of crashing
+- Works seamlessly with all downstream models
+
+### Example Scenario
+```
+# During training: State has values ['California', 'Texas', 'Florida']
+# During inference: We get 'Nevada' (not in training data)
+
+# OLD (would crash):
+encoder.transform(['Nevada'])  # ❌ ValueError
+
+# NEW (handles gracefully):
+encoder.transform(['Nevada'])  # ✓ Returns [-1] for unknown
+```
+
+### Using SafePredictorWrapper for Inference
+To make predictions on new data that may contain unknown categorical values:
+
+```python
+from inference import SafePredictorWrapper
+
+predictor = SafePredictorWrapper(
+    'models/random_forest_model.joblib',
+    'models/label_encoders.joblib',
+    'models/scaler.joblib'
+)
+
+# Make predictions on new data with unknown values
+predictions = predictor.predict(new_data)  # Works! ✓
+```
+
+### New Files for Unknown Value Handling
+- `safe_encoders.py` - SafeLabelEncoder class
+- `inference.py` - SafePredictorWrapper for safe predictions
+- `UNKNOWN_VALUES_GUIDE.md` - Complete guide and best practices
+
+📖 **See UNKNOWN_VALUES_GUIDE.md for detailed documentation.**
