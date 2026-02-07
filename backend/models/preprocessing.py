@@ -23,7 +23,7 @@ feature_columns = ['Age', 'Income', 'Credit History Length', 'Number of Existing
                     'Employment Profile', 'Occupation']
 
 X = df[feature_columns]
-y = df['Credit Score']
+y = df['Credit Score'].astype(int)
 
 # Store original column names for later
 original_columns = X.columns.tolist()
@@ -46,10 +46,20 @@ print(f"Label encoders saved to: {os.path.join(script_dir, 'label_encoders.jobli
 
 print("Categorical variables encoded successfully!")
 
-# Standardize the features for SMOTE-ENN
+# Standardize the features
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X_encoded)
 X_scaled_df = pd.DataFrame(X_scaled, columns=original_columns)
+
+# Save the scaler
+joblib.dump(scaler, os.path.join(script_dir, 'scaler.joblib'))
+print(f"Scaler saved to: {os.path.join(script_dir, 'scaler.joblib')}")
+
+# Save preprocessed data (without SMOTE-ENN)
+preprocessed_df = pd.concat([X_scaled_df, y.reset_index(drop=True)], axis=1)
+output_path_std = os.path.join(project_dir, 'dataset', 'credit_data_preprocessed.csv')
+preprocessed_df.to_csv(output_path_std, index=False)
+print(f"Standard preprocessed dataset (No SMOTE) saved to: {output_path_std}")
 
 print(f"\nApplying SMOTE-ENN for imbalanced learning...")
 
@@ -65,13 +75,13 @@ print(f"  Min: {y_resampled.min():.2f}")
 print(f"  Max: {y_resampled.max():.2f}\n")
 
 # Combine X and y into a single dataframe and save
-preprocessed_df = pd.concat([X_resampled.reset_index(drop=True), 
+resampled_df = pd.concat([X_resampled.reset_index(drop=True), 
                              pd.Series(y_resampled, name='Credit Score').reset_index(drop=True)], 
                             axis=1)
 
-# Save preprocessed data
-output_path = os.path.join(project_dir, 'dataset', 'credit_data_preprocessed.csv')
-preprocessed_df.to_csv(output_path, index=False)
-print(f"Preprocessed dataset saved to: {output_path}")
+# Save resampled data
+output_path_resampled = os.path.join(project_dir, 'dataset', 'credit_data_resampled.csv')
+resampled_df.to_csv(output_path_resampled, index=False)
+print(f"Resampled dataset (with SMOTE-ENN) saved to: {output_path_resampled}")
 
 print("\nPreprocessing completed successfully!")
