@@ -39,7 +39,12 @@ print(df['Credit Score'].describe())
 
 print(f"\nUsing preprocessed dataset (with SMOTE-ENN) with {len(df)} samples for training")
 
-X = df.drop('Credit Score', axis=1)
+# Select only the specified feature columns
+feature_columns = ['Age', 'Income', 'Credit History Length', 'Number of Existing Loans', 
+                    'Existing Customer', 'State', 'City', 'LTV Ratio', 
+                    'Employment Profile', 'Occupation']
+
+X = df[feature_columns]
 y = df['Credit Score']
 
 # Note: Data is already encoded and scaled from preprocessing.py

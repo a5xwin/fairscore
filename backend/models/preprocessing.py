@@ -16,8 +16,12 @@ df = pd.read_csv(os.path.join(project_dir, 'dataset', 'credit_data.csv'))
 print(f"Original dataset shape: {df.shape}")
 print(f"Original class distribution:\n{df['Credit Score'].describe()}\n")
 
-# Separate features and target
-X = df.drop('Credit Score', axis=1)
+# Select only the specified columns for prediction
+feature_columns = ['Age', 'Income', 'Credit History Length', 'Number of Existing Loans', 
+                    'Existing Customer', 'State', 'City', 'LTV Ratio', 
+                    'Employment Profile', 'Occupation']
+
+X = df[feature_columns]
 y = df['Credit Score']
 
 # Store original column names for later
