@@ -16,7 +16,7 @@ from Utilities import CreditScorePredictor
 
 
 def main():
-    api_key = "AIzaSyB8CG7OBOmPRRNZGv6f1rYr1mCXGL_z-5Q"
+    api_key = "YOUR API KEY HERE"
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set")
 
