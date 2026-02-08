@@ -1,0 +1,31 @@
+{
+  "base_models": {
+    "random_forest": "D:\\BTech Related\\Final_Year_Project\\backend\\models\\random_forest_model.joblib",
+    "lightgbm": "D:\\BTech Related\\Final_Year_Project\\backend\\models\\lightgbm_model.joblib",
+    "tab_transformer": "D:\\BTech Related\\Final_Year_Project\\backend\\models\\tab_transformer_model.pth"
+  },
+  "meta_learner": "D:\\BTech Related\\Final_Year_Project\\backend\\models\\meta_learner.joblib",
+  "feature_columns": [
+    "Age",
+    "Income",
+    "Credit History Length",
+    "Number of Existing Loans",
+    "Existing Customer",
+    "State",
+    "City",
+    "LTV Ratio",
+    "Employment Profile",
+    "Occupation"
+  ],
+  "coefficients": {
+    "random_forest": 3.795576972587311,
+    "lightgbm": -2.7986682502563083,
+    "tab_transformer": 0.0020643561035869062,
+    "intercept": 0.6467624882835707
+  },
+  "test_performance": {
+    "r2_score": 0.9946262015423243,
+    "mae": 9.402366448994641,
+    "rmse": 11.972342388389713
+  }
+}
