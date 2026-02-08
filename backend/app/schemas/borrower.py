@@ -19,3 +19,14 @@ class BorrowerDetailsSchema(BaseModel):
     loanTenureYr: int
     loanTenureMon: int
     purpose: str
+
+class LoanUpdateSchema(BaseModel):
+    userId: str
+    loanAmount: float
+    loanTenureYr: int
+    loanTenureMon: int
+    purpose: str
+
+class ApplyLoanSchema(BaseModel):
+    userId: str
+    lenderId: str
