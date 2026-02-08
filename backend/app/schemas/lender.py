@@ -1,6 +1,10 @@
 from pydantic import BaseModel
 
-class LenderDetailsSchema(BaseModel):
+
+# -----------------------------
+# POST /lender/details
+# -----------------------------
+class LenderCreateSchema(BaseModel):
     lenderId: str
     type: str
     capacity: float
