@@ -14,17 +14,17 @@ import Register from "./pages/public/Register";
 import NotFound from "./pages/NotFound";
 
 // Borrower Pages
+import BorrowerOnboarding from "./pages/borrower/BorrowerOnboarding";
 import BorrowerDashboard from "./pages/borrower/BorrowerDashboard";
-import CreditCheck from "./pages/borrower/CreditCheck";
+import LoanDetails from "./pages/borrower/LoanDetails";
 import LoanApply from "./pages/borrower/LoanApply";
-import MyLoans from "./pages/borrower/MyLoans";
-import Documents from "./pages/borrower/Documents";
-import Profile from "./pages/borrower/Profile";
+import Approvals from "./pages/borrower/Approvals";
 
 // Lender Pages
+import LenderOnboarding from "./pages/lender/LenderOnboarding";
 import LenderDashboard from "./pages/lender/LenderDashboard";
-import BorrowerList from "./pages/lender/BorrowerList";
-import LoanReview from "./pages/lender/LoanReview";
+import LoanRequests from "./pages/lender/LoanRequests";
+import ApprovalList from "./pages/lender/ApprovalList";
 
 const queryClient = new QueryClient();
 
@@ -43,16 +43,15 @@ const App = () => (
 
             {/* Borrower Routes */}
             <Route element={<ProtectedRoute allowedRoles={['borrower']} />}>
+              <Route path="/borrower/onboarding" element={<BorrowerOnboarding />} />
               <Route path="/borrower" element={<Layout><Navigate to="/borrower/dashboard" replace /></Layout>} />
               <Route path="/borrower/*" element={
                 <Layout>
                   <Routes>
                     <Route path="dashboard" element={<BorrowerDashboard />} />
-                    <Route path="credit-check" element={<CreditCheck />} />
+                    <Route path="loan-details" element={<LoanDetails />} />
                     <Route path="apply" element={<LoanApply />} />
-                    <Route path="loans" element={<MyLoans />} />
-                    <Route path="documents" element={<Documents />} />
-                    <Route path="settings" element={<Profile />} />
+                    <Route path="approvals" element={<Approvals />} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </Layout>
@@ -61,14 +60,14 @@ const App = () => (
 
             {/* Lender Routes */}
             <Route element={<ProtectedRoute allowedRoles={['lender']} />}>
+              <Route path="/lender/onboarding" element={<LenderOnboarding />} />
               <Route path="/lender" element={<Layout><Navigate to="/lender/dashboard" replace /></Layout>} />
               <Route path="/lender/*" element={
                 <Layout>
                   <Routes>
                     <Route path="dashboard" element={<LenderDashboard />} />
-                    <Route path="borrowers" element={<BorrowerList />} />
-                    <Route path="reviews" element={<BorrowerList />} />
-                    <Route path="reviews/:id" element={<LoanReview />} />
+                    <Route path="loan-requests" element={<LoanRequests />} />
+                    <Route path="approval-list" element={<ApprovalList />} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </Layout>

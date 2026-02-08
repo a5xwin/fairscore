@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { authService } from '@/services/authService';
 
 const Register = () => {
     const [name, setName] = useState('');
@@ -22,22 +23,28 @@ const Register = () => {
         setIsLoading(true);
 
         try {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API
+            const data = await authService.register({ name, email, password, role });
 
-            // Mock registration logic
-            const newUser = {
-                id: Math.random().toString(36).substr(2, 9),
-                name,
-                email,
-                role
+            const user = {
+                id: data.userid,
+                name: data.name,
+                email: data.email,
+                role: data.role,
             };
 
-            login(newUser, 'mock-jwt-token-new');
-            navigate(`/${role}/dashboard`);
-            toast.success(`Welcome to FairScore, ${name}!`);
+            login(user, data.token ?? '');
 
-        } catch (error) {
-            toast.error('Registration failed. Try again.');
+            // Borrowers go to onboarding first; lenders go to lender onboarding
+            if (data.role === 'borrower') {
+                navigate('/borrower/onboarding');
+            } else {
+                navigate('/lender/onboarding');
+            }
+            toast.success(`Welcome to FairScore, ${data.name}!`);
+
+        } catch (error: any) {
+            const msg = error?.response?.data?.detail || 'Registration failed. Try again.';
+            toast.error(msg);
         } finally {
             setIsLoading(false);
         }

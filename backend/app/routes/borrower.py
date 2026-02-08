@@ -17,6 +17,7 @@ from app.services.borrower_services import (
 router = APIRouter(prefix="/borrower", tags=["Borrower"])
 
 
+
 @router.post("/details", status_code=status.HTTP_201_CREATED)
 def borrower_details(data: BorrowerDetailsSchema):
     try:
@@ -29,9 +30,9 @@ def borrower_details(data: BorrowerDetailsSchema):
 
 
 @router.get("/credit-info")
-def credit_info(userId: str):
+def credit_info(userid: str):
     try:
-        return get_credit_info(userId)
+        return get_credit_info(userid)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -40,9 +41,9 @@ def credit_info(userId: str):
 
 
 @router.get("/loan-info")
-def loan_info(userId: str):
+def loan_info(userid: str):
     try:
-        return get_loan_info(userId)
+        return get_loan_info(userid)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -62,14 +63,11 @@ def loan_update(data: LoanUpdateSchema):
 
 
 @router.get("/lender-info")
-def lender_info():
+def lender_info(userid: str):
     try:
         lenders = get_lenders()
         if not lenders:
-            raise HTTPException(
-                status_code=status.HTTP_204_NO_CONTENT,
-                detail="No lenders available"
-            )
+            return []
         return lenders
     except HTTPException:
         raise
@@ -83,7 +81,7 @@ def lender_info():
 @router.post("/apply", status_code=status.HTTP_201_CREATED)
 def apply(data: ApplyLoanSchema):
     try:
-        return apply_to_lender(data.userId, data.lenderId)
+        return apply_to_lender(data.userid, data.lenderid)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -91,9 +89,9 @@ def apply(data: ApplyLoanSchema):
         )
 
 @router.get("/approved-lenders")
-def approved_lenders(userId: str):
+def approved_lenders(userid: str):
     try:
-        lenders = get_approved_lenders(userId)
+        lenders = get_approved_lenders(userid)
         if not lenders:
             return []
         return lenders

@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
+import { authService } from '@/services/authService';
 
 const Login = () => {
     const [email, setEmail] = useState('');
@@ -18,34 +19,22 @@ const Login = () => {
         e.preventDefault();
         setIsLoading(true);
 
-        // Mock login logic
         try {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API delay
+            const data = await authService.login({ email, password });
 
-            // This is where you'd call your actual API
-            if (email === 'borrower@test.com' && password === 'password') {
-                login({
-                    id: '1',
-                    name: 'John Borrower',
-                    email: 'borrower@test.com',
-                    role: 'borrower'
-                }, 'mock-jwt-token-borrower');
-                navigate('/borrower/dashboard');
-                toast.success('Welcome back, John!');
-            } else if (email === 'lender@test.com' && password === 'password') {
-                login({
-                    id: '2',
-                    name: 'Jane Lender',
-                    email: 'lender@test.com',
-                    role: 'lender'
-                }, 'mock-jwt-token-lender');
-                navigate('/lender/dashboard');
-                toast.success('Welcome back, Jane!');
-            } else {
-                toast.error('Invalid credentials. specific test emails in code.');
-            }
-        } catch (error) {
-            toast.error('Something went wrong');
+            const user = {
+                id: data.userid,
+                name: data.name,
+                email: data.email,
+                role: data.role,
+            };
+
+            login(user, data.token ?? '');
+            navigate(`/${data.role}/dashboard`);
+            toast.success(`Welcome back, ${data.name}!`);
+        } catch (error: any) {
+            const msg = error?.response?.data?.detail || 'Invalid credentials.';
+            toast.error(msg);
         } finally {
             setIsLoading(false);
         }
@@ -83,10 +72,7 @@ const Login = () => {
                                 onChange={(e) => setPassword(e.target.value)}
                             />
                         </div>
-                        <div className="text-sm text-muted-foreground mt-2">
-                            <p>Test Borrower: borrower@test.com / password</p>
-                            <p>Test Lender: lender@test.com / password</p>
-                        </div>
+
                     </CardContent>
                     <CardFooter className="flex flex-col gap-4">
                         <Button className="w-full" type="submit" disabled={isLoading}>

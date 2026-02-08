@@ -12,22 +12,17 @@ class LenderCreateSchema(BaseModel):
     loanAmountTo: float
     interest: float
 
-
-# -----------------------------
-# PUT /lender/details
-# -----------------------------
-class LenderUpdateSchema(BaseModel):
-    lenderId: str
+class LenderDetailsUpdateSchema(BaseModel):
+    lenderID: str
     capacity: float
     loanAmountFrom: float
     loanAmountTo: float
     interest: float
 
-
-# -----------------------------
-# POST /lender/approve
-# POST /lender/skip
-# -----------------------------
-class LenderActionSchema(BaseModel):
+class ApproveBorrowerSchema(BaseModel):
     lenderId: str
     userId: str
+
+class SkipBorrowerSchema(BaseModel):
+    lenderId: str
+    userid: str
