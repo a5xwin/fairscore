@@ -1,13 +1,14 @@
-from passlib.context import CryptContext
+import bcrypt
 from app.db.supabase import supabase
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def hash_password(password: str):
-    return pwd_context.hash(password)
+def hash_password(password: str) -> str:
+    pw = password.encode("utf-8")[:72]
+    return bcrypt.hashpw(pw, bcrypt.gensalt()).decode("utf-8")
 
-def verify_password(password, hashed):
-    return pwd_context.verify(password, hashed)
+def verify_password(password: str, hashed: str) -> bool:
+    pw = password.encode("utf-8")[:72]
+    return bcrypt.checkpw(pw, hashed.encode("utf-8"))
 
 def register_user(data):
     hashed = hash_password(data.password)
@@ -19,13 +20,26 @@ def register_user(data):
         "role": data.role
     }).execute()
 
-    return {"userId": res.data[0]["id"], "role": data.role}
+    user = res.data[0]
+    return {
+        "userid": user["id"],
+        "name": user["name"],
+        "email": user["email"],
+        "role": user["role"],
+    }
 
 def login_user(data):
     res = supabase.table("users").select("*").eq("email", data.email).execute()
+    if not res.data:
+        raise Exception("Invalid credentials")
     user = res.data[0]
 
     if not verify_password(data.password, user["password"]):
         raise Exception("Invalid credentials")
 
-    return {"userId": user["id"], "role": user["role"]}
+    return {
+        "userid": user["id"],
+        "name": user["name"],
+        "email": user["email"],
+        "role": user["role"],
+    }

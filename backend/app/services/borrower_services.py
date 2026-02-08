@@ -53,8 +53,9 @@ def create_borrower_details(data):
 
     # Insert borrower
     supabase.table("borrower").insert({
-        "id": data.userId,
-        "dob": data.dob,
+        "id": data.userid,
+        "dob": str(data.dob),
+        "gender": data.gender,
         "state": data.state,
         "city": data.city,
         "phone_no": data.phone,
@@ -70,7 +71,7 @@ def create_borrower_details(data):
 
     # Insert loan details
     supabase.table("borrower_loan_details").insert({
-        "borrower_id": data.userId,
+        "borrower_id": data.userid,
         "loan_amount": data.loanAmount,
         "loan_tenure": loan_tenure_months,
         "purpose": data.purpose
@@ -84,7 +85,7 @@ def create_borrower_details(data):
     credit_line = estimated_credit_line(score, data.income, ltv)
 
     supabase.table("borrower_credit_info").insert({
-        "id": data.userId,
+        "id": data.userid,
         "credit_score": score,
         "risk": risk,
         "credit_line": credit_line
@@ -103,7 +104,7 @@ def get_credit_info(user_id: str):
 
     return {
         "creditScore": res.data["credit_score"],
-        "risk": res.data["risk"],
+        "Risk": res.data["risk"],
         "creditLine": res.data["credit_line"]
     }
 
@@ -138,7 +139,7 @@ def update_loan_info(data):
             "loan_tenure": tenure_months,
             "purpose": data.purpose
         }) \
-        .eq("borrower_id", data.userId) \
+        .eq("borrower_id", data.userid) \
         .execute()
 
     return {"status": "updated"}
@@ -152,13 +153,21 @@ def get_lenders():
         .select("id, type, loan_amount_from, loan_amount_to, interest") \
         .execute()
 
+    # Also fetch lender names from users table
+    lender_ids = [l["id"] for l in res.data]
+    if not lender_ids:
+        return []
+    users_res = supabase.table("users").select("id, name").in_("id", lender_ids).execute()
+    name_map = {u["id"]: u["name"] for u in users_res.data}
+
     return [
         {
-            "lenderId": l["id"],
+            "lenderid": l["id"],
+            "name": name_map.get(l["id"], "Unknown"),
             "type": l["type"],
             "loanAmountFrom": l["loan_amount_from"],
             "loanAmountTo": l["loan_amount_to"],
-            "interest": l["interest"]
+            "Interest": l["interest"]
         }
         for l in res.data
     ]
@@ -182,19 +191,33 @@ def apply_to_lender(user_id: str, lender_id: str):
 # -----------------------------
 def get_approved_lenders(user_id: str):
     res = supabase.table("loan") \
-        .select("lender(id, type, capacity, loan_amount_from, loan_amount_to, interest)") \
+        .select("lender_id") \
         .eq("borrower_id", user_id) \
         .eq("status", "approved") \
         .execute()
 
+    if not res.data:
+        return []
+
+    lender_ids = [r["lender_id"] for r in res.data]
+    lenders_res = supabase.table("lender") \
+        .select("id, type, capacity, loan_amount_from, loan_amount_to, interest") \
+        .in_("id", lender_ids) \
+        .execute()
+
+    # Fetch names
+    users_res = supabase.table("users").select("id, name").in_("id", lender_ids).execute()
+    name_map = {u["id"]: u["name"] for u in users_res.data}
+
     return [
         {
-            "lenderId": r["lender"]["id"],
-            "type": r["lender"]["type"],
-            "capacity": r["lender"]["capacity"],
-            "loanAmountFrom": r["lender"]["loan_amount_from"],
-            "loanAmountTo": r["lender"]["loan_amount_to"],
-            "interest": r["lender"]["interest"]
+            "lenderId": r["id"],
+            "Name": name_map.get(r["id"], "Unknown"),
+            "type": r["type"],
+            "capacity": r["capacity"],
+            "loanAmountFrom": r["loan_amount_from"],
+            "loanAmountTo": r["loan_amount_to"],
+            "interest": r["interest"]
         }
-        for r in res.data
+        for r in lenders_res.data
     ]

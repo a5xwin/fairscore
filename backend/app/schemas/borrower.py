@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from datetime import date
 
 class BorrowerDetailsSchema(BaseModel):
-    userId: str
+    userid: str
     dob: date
     gender: str
     state: str
@@ -21,12 +21,12 @@ class BorrowerDetailsSchema(BaseModel):
     purpose: str
 
 class LoanUpdateSchema(BaseModel):
-    userId: str
+    userid: str
     loanAmount: float
     loanTenureYr: int
     loanTenureMon: int
     purpose: str
 
 class ApplyLoanSchema(BaseModel):
-    userId: str
-    lenderId: str
+    userid: str
+    lenderid: str

@@ -9,7 +9,10 @@ import {
     LogOut,
     Settings,
     Menu,
-    X
+    X,
+    CheckCircle,
+    Send,
+    ClipboardList
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -24,17 +27,15 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
     const borrowerLinks = [
         { title: 'Dashboard', href: '/borrower/dashboard', icon: LayoutDashboard },
-        { title: 'Credit Check', href: '/borrower/credit-check', icon: CreditCard },
-        { title: 'Apply Loan', href: '/borrower/apply', icon: FileText },
-        { title: 'My Loans', href: '/borrower/loans', icon: FileText },
-        { title: 'Settings', href: '/borrower/settings', icon: Settings },
+        { title: 'Loan Details', href: '/borrower/loan-details', icon: CreditCard },
+        { title: 'Apply Loan', href: '/borrower/apply', icon: Send },
+        { title: 'Approvals', href: '/borrower/approvals', icon: CheckCircle },
     ];
 
     const lenderLinks = [
         { title: 'Dashboard', href: '/lender/dashboard', icon: LayoutDashboard },
-        { title: 'Borrowers', href: '/lender/borrowers', icon: Users },
-        { title: 'Review Loans', href: '/lender/reviews', icon: FileText },
-        { title: 'Settings', href: '/lender/settings', icon: Settings },
+        { title: 'Loan Requests', href: '/lender/loan-requests', icon: ClipboardList },
+        { title: 'Approval List', href: '/lender/approval-list', icon: CheckCircle },
     ];
 
     const links = user.role === 'borrower' ? borrowerLinks : lenderLinks;
