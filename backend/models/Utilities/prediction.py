@@ -281,8 +281,22 @@ class CreditScorePredictor:
         # Prepare background data
         if background_data is None:
             if self._background_data is None:
-                # Use the input data as background if nothing else available
-                background_data = df
+                # Try to load a default background from the original dataset
+                dataset_path = os.path.join(
+                    os.path.dirname(self.models_dir),
+                    'dataset',
+                    'credit_data.csv'
+                )
+                if os.path.exists(dataset_path):
+                    df_bg = pd.read_csv(dataset_path)
+                    df_bg = df_bg[self.required_features]
+                    if len(df_bg) > sample_size:
+                        df_bg = df_bg.sample(n=sample_size, random_state=42)
+                    self._background_data = self._validate_input(df_bg)
+                    background_data = self._background_data
+                else:
+                    # Fallback to input data if dataset is unavailable
+                    background_data = df
             else:
                 background_data = self._background_data
         else:
@@ -382,6 +396,90 @@ class CreditScorePredictor:
             'explanation': lime_exp,
             'feature_contributions': feature_contributions,
             'prediction': predictions[0]
+        }
+
+    def get_credit_improvement_advice(self, data, shap_explanation=None, api_key=None,
+                                      model_name='gemini-2.5-flash',
+                                      score_threshold=650, top_k=5):
+        """
+        Send prediction data and explanations to Gemini and get advice for improving
+        credit score when the prediction is below a threshold.
+
+        Parameters:
+        -----------
+        data : dict or pandas.DataFrame
+            Input data to explain
+        shap_explanation : dict, optional
+            Precomputed SHAP explanation dict from explain_prediction_shap
+        api_key : str
+            Google Generative AI API key
+        model_name : str, default='gemini-1.5-flash'
+            Gemini model name
+        score_threshold : int, default=650
+            Threshold below which advice is requested
+        top_k : int, default=5
+            Number of top SHAP contributors to include
+
+        Returns:
+        --------
+        dict : Advice response
+        """
+        if not api_key:
+            raise ValueError("api_key is required to call Gemini")
+
+        df = self._validate_input(data)
+        prediction = self.ensemble.predict(df)[0]
+
+        if shap_explanation is None:
+            shap_explanation = self.explain_prediction_shap(df, sample_size=100)
+
+        shap_values = np.array(shap_explanation['shap_values'])
+        feature_names = shap_explanation['feature_names']
+        sample_shap = shap_values[0]
+
+        contrib_df = pd.DataFrame({
+            'feature': feature_names,
+            'shap_value': sample_shap
+        })
+        top_negative = contrib_df.sort_values('shap_value').head(top_k)
+        top_positive = contrib_df.sort_values('shap_value', ascending=False).head(top_k)
+
+        payload = {
+            'prediction': float(prediction),
+            'score_threshold': int(score_threshold),
+            'features': df.iloc[0].to_dict(),
+            'top_negative_factors': top_negative.to_dict(orient='records'),
+            'top_positive_factors': top_positive.to_dict(orient='records')
+        }
+
+        if prediction >= score_threshold:
+            return {
+                'prediction': float(prediction),
+                'advice': 'Score is not poor. No improvement advice requested.',
+                'payload_sent': payload
+            }
+
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+
+        prompt = (
+            "You are a credit risk advisor. Given the prediction and SHAP factors, "
+            "suggest 3-7 practical actions to improve the credit score. "
+            "Prioritize actionable steps and reference the negative SHAP factors. "
+            "Keep the response concise and avoid legal or financial guarantees.\n\n"
+            f"Input data: {payload['features']}\n"
+            f"Predicted score: {payload['prediction']} (threshold {payload['score_threshold']})\n"
+            f"Top negative factors: {payload['top_negative_factors']}\n"
+            f"Top positive factors: {payload['top_positive_factors']}\n"
+        )
+
+        response = model.generate_content(prompt)
+        return {
+            'prediction': float(prediction),
+            'advice': response.text if hasattr(response, 'text') else str(response),
+            'payload_sent': payload
         }
     
     def explain_meta_learner(self, data):
