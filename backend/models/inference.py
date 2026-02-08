@@ -18,6 +18,17 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
+def _normalize_category_value(value):
+    normalized = str(value).strip().lower().replace("-", " ")
+    normalized = " ".join(normalized.split())
+    return normalized
+
+
+def _match_known_category(value, known_values, normalized_lookup):
+    key = _normalize_category_value(value)
+    return normalized_lookup.get(key, str(value).strip())
+
+
 class SafePredictorWrapper:
     """
     Wrapper for safe prediction with support for unseen categorical values.
@@ -67,11 +78,17 @@ class SafePredictorWrapper:
                 raise ValueError(f"Missing required column: {col}")
             
             encoder = self.label_encoders[col]
-            known_values = set(encoder.classes_)
-            unknown_mask = ~df_encoded[col].astype(str).isin(known_values)
+            known_values = list(encoder.classes_)
+            normalized_lookup = {
+                _normalize_category_value(val): val for val in known_values
+            }
+            normalized_col = df_encoded[col].map(
+                lambda v: _match_known_category(v, known_values, normalized_lookup)
+            )
+            unknown_mask = ~normalized_col.astype(str).isin(known_values)
             
             # Transform known values
-            encoded_values = encoder.transform(df_encoded[col].astype(str))
+            encoded_values = encoder.transform(normalized_col.astype(str))
             df_encoded[col] = encoded_values
             
             if unknown_mask.any():
@@ -369,11 +386,17 @@ class StackedEnsemblePredictor:
                 raise ValueError(f"Missing required column: {col}")
             
             encoder = self.label_encoders[col]
-            known_values = set(encoder.classes_)
-            unknown_mask = ~df_encoded[col].astype(str).isin(known_values)
+            known_values = list(encoder.classes_)
+            normalized_lookup = {
+                _normalize_category_value(val): val for val in known_values
+            }
+            normalized_col = df_encoded[col].map(
+                lambda v: _match_known_category(v, known_values, normalized_lookup)
+            )
+            unknown_mask = ~normalized_col.astype(str).isin(known_values)
             
             # Transform known values
-            encoded_values = encoder.transform(df_encoded[col].astype(str))
+            encoded_values = encoder.transform(normalized_col.astype(str))
             df_encoded[col] = encoded_values
             
             if unknown_mask.any():
@@ -1115,8 +1138,8 @@ if __name__ == "__main__":
             'State': ['California', 'Texas', 'Florida'],
             'City': ['Los Angeles', 'Houston', 'Miami'],
             'LTV Ratio': [0.8, 0.7, 0.75],
-            'Employment Profile': ['Employed', 'Self-Employed', 'Employed'],
-            'Occupation': ['Engineer', 'Doctor', 'Manager']
+            'Employment Profile': ['Freelancer', 'Self-Employed', 'Salaried'],
+            'Occupation': ['Software Engineer', 'Doctor', 'Business Owner']
         })
         
         print("📋 Test Data:")
