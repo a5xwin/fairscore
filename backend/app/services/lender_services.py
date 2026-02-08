@@ -121,26 +121,36 @@ def get_loan_requests(lender_id: str):
 # POST /lender/approve
 # -----------------------------
 def approve_borrower(lender_id: str, borrower_id: str):
+    # Approve this lender's request
     supabase.table("loan") \
         .update({"status": "approved"}) \
         .eq("lender_id", lender_id) \
         .eq("borrower_id", borrower_id) \
+        .eq("status", "requested") \
+        .execute()
+
+    # Cancel ALL other lender requests of this borrower
+    supabase.table("loan") \
+        .update({"status": "cancelled"}) \
+        .eq("borrower_id", borrower_id) \
+        .neq("lender_id", lender_id) \
+        .eq("status", "requested") \
         .execute()
 
     return {"status": "approved"}
-
 
 # -----------------------------
 # POST /lender/skip
 # -----------------------------
 def skip_borrower(lender_id: str, borrower_id: str):
     supabase.table("loan") \
-        .update({"status": "skipped"}) \
+        .update({"status": "cancelled"}) \
         .eq("lender_id", lender_id) \
         .eq("borrower_id", borrower_id) \
+        .eq("status", "requested") \
         .execute()
 
-    return {"status": "skipped"}
+    return {"status": "cancelled"}
 
 
 # -----------------------------
