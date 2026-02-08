@@ -32,3 +32,10 @@ tifffile==2026.1.28
 tqdm==4.67.3
 typing_extensions==4.15.0
 tzdata==2025.3
+
+fastapi
+uvicorn[standard]
+python-dotenv
+supabase
+pydantic
+
