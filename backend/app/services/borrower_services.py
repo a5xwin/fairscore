@@ -1,4 +1,25 @@
 from app.db.supabase import supabase
+from datetime import datetime
+import sys
+import os
+
+# Add parent directory to path for Utilities import
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+try:
+    from models.Utilities.prediction import CreditScorePredictor
+    ML_PREDICTOR_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: CreditScorePredictor not available: {e}")
+    ML_PREDICTOR_AVAILABLE = False
+
+# Initialize the predictor once at module level
+_credit_predictor = None
+if ML_PREDICTOR_AVAILABLE:
+    try:
+        _credit_predictor = CreditScorePredictor()
+    except Exception as e:
+        print(f"Warning: Failed to initialize CreditScorePredictor: {e}")
+        ML_PREDICTOR_AVAILABLE = False
 
 # -----------------------------
 # Helpers
@@ -14,9 +35,75 @@ def calculate_ltv(loan_amount: float, asset_value: float) -> float:
 
 
 # -----------------------------
-# ML STUB (replace later)
+# ML PREDICTION for Credit Score
 # -----------------------------
-def generate_credit_score(income, credit_history_months, loan_no):
+def generate_credit_score(dob, income, credit_history_months, loan_no, state, city, 
+                         employment_profile, occupation, asset_value, loan_amount, 
+                         existing_customer="yes"):
+    """
+    Generate credit score using the ML model if available, otherwise use stub.
+    
+    Parameters:
+    -----------
+    dob : str or datetime - Date of birth in YYYY-MM-DD format
+    income : float - Annual income
+    credit_history_months : int - Credit history in months
+    loan_no : int - Number of existing loans
+    state : str - State of residence
+    city : str - City of residence
+    employment_profile : str - Employment profile (e.g., 'Salaried', 'Self-employed')
+    occupation : str - Occupation
+    asset_value : float - Asset value
+    loan_amount : float - Loan amount
+    existing_customer : str - 'yes' or 'no'
+    
+    Returns:
+    --------
+    int - Credit score between 300 and 900
+    """
+    if ML_PREDICTOR_AVAILABLE and _credit_predictor is not None:
+        try:
+            # Calculate age from DOB
+            if isinstance(dob, str):
+                dob_date = datetime.strptime(dob, '%Y-%m-%d')
+            else:
+                dob_date = dob
+            
+            today = datetime.now()
+            age = today.year - dob_date.year - ((today.month, today.day) < (dob_date.month, dob_date.day))
+            
+            # Calculate LTV ratio
+            ltv_ratio = (loan_amount / asset_value) if asset_value > 0 else 0
+            
+            # Prepare data for prediction
+            credit_history_years = credit_history_months / 12
+            
+            prediction_data = {
+                'Age': age,
+                'Income': income,
+                'Credit History Length': credit_history_years,
+                'Number of Existing Loans': loan_no,
+                'Existing Customer': 'Yes' if existing_customer.lower() == 'yes' else 'No',
+                'State': state,
+                'City': city,
+                'LTV Ratio': ltv_ratio,
+                'Employment Profile': employment_profile,
+                'Occupation': occupation
+            }
+            
+            # Get prediction from ML model
+            result = _credit_predictor.predict(prediction_data)
+            score = int(result['prediction'])
+            
+            # Ensure score is within valid range
+            return int(min(max(score, 300), 900))
+        
+        except Exception as e:
+            print(f"Error in ML prediction: {e}, falling back to stub implementation")
+            # Fall back to stub implementation
+            pass
+    
+    # Stub implementation (fallback)
     score = 600
     score += min(income / 10000, 120)
     score += min(credit_history_months / 12, 50)
@@ -79,7 +166,17 @@ def create_borrower_details(data):
 
     # Credit score + risk + credit line
     score = generate_credit_score(
-        data.income, credit_history_months, data.loanNo
+        dob=data.dob,
+        income=data.income,
+        credit_history_months=credit_history_months,
+        loan_no=data.loanNo,
+        state=data.state,
+        city=data.city,
+        employment_profile=data.empProfile,
+        occupation=data.occupation,
+        asset_value=data.assetValue,
+        loan_amount=data.loanAmount,
+        existing_customer="yes"
     )
     risk = risk_bucket(score)
     credit_line = estimated_credit_line(score, data.income, ltv)
