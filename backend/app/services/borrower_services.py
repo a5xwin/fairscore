@@ -126,6 +126,72 @@ def estimated_credit_line(score, income, ltv):
     return int(base * score_factor * ltv_penalty)
 
 
+def _get_user_prediction_data(user_id: str):
+    """
+    Helper function to build prediction data dictionary for a given user
+    from the database.
+    """
+    if not ML_PREDICTOR_AVAILABLE or _credit_predictor is None:
+        raise Exception("ML Predictor is not available")
+        
+    borrower_res = supabase.table("borrower").select("*").eq("id", user_id).single().execute()
+    if not borrower_res.data:
+        raise Exception("Borrower not found")
+        
+    b_data = borrower_res.data
+    
+    # Calculate age from DOB
+    dob = b_data.get("dob")
+    if isinstance(dob, str):
+        dob_date = datetime.strptime(dob, '%Y-%m-%d')
+    else:
+        dob_date = dob
+    today = datetime.now()
+    age = today.year - dob_date.year - ((today.month, today.day) < (dob_date.month, dob_date.day))
+    
+    credit_history_years = b_data.get("credit_history_length", 0) / 12
+    
+    prediction_data = {
+        'Age': age,
+        'Income': b_data.get("income"),
+        'Credit History Length': credit_history_years,
+        'Number of Existing Loans': b_data.get("loan_no"),
+        'Existing Customer': 'Yes' if b_data.get("existing_customer", "yes").lower() == 'yes' else 'No',
+        'State': b_data.get("state"),
+        'City': b_data.get("city"),
+        'LTV Ratio': b_data.get("ltv_ratio", 0),
+        'Employment Profile': b_data.get("employment_profile"),
+        'Occupation': b_data.get("occupation")
+    }
+    
+    return prediction_data
+
+
+def get_shap_explanation(user_id: str):
+    data = _get_user_prediction_data(user_id)
+    return _credit_predictor.explain_prediction_shap(data)
+
+
+def get_lime_explanation(user_id: str):
+    data = _get_user_prediction_data(user_id)
+    return _credit_predictor.explain_prediction_lime(data)
+
+
+def get_gemini_advice(user_id: str):
+    data = _get_user_prediction_data(user_id)
+    # Get SHAP explanation first as it's required/helpful for Gemini advice
+    try:
+        shap_exp = _credit_predictor.explain_prediction_shap(data)
+    except Exception as e:
+        print(f"Warning: Could not get SHAP explanation for Gemini advice: {e}")
+        shap_exp = None
+        
+    # Assume the GEMINI_API_KEY environment variable is set or uses fallback
+    import os
+    api_key = os.getenv("GEMINI_API_KEY")
+    return _credit_predictor.get_credit_improvement_advice(data, shap_explanation=shap_exp, api_key=api_key)
+
+
 # -----------------------------
 # POST /borrower/details
 # -----------------------------

@@ -11,7 +11,10 @@ from app.services.borrower_services import (
     update_loan_info,
     get_lenders,
     apply_to_lender,
-    get_approved_lenders
+    get_approved_lenders,
+    get_shap_explanation,
+    get_lime_explanation,
+    get_gemini_advice
 )
 
 router = APIRouter(prefix="/borrower", tags=["Borrower"])
@@ -99,4 +102,37 @@ def approved_lenders(userid: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch approved lenders"
+        )
+
+
+@router.get("/explain/shap")
+def shap_explanation(userid: str):
+    try:
+        return get_shap_explanation(userid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate SHAP explanation: {str(e)}"
+        )
+
+
+@router.get("/explain/lime")
+def lime_explanation(userid: str):
+    try:
+        return get_lime_explanation(userid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate LIME explanation: {str(e)}"
+        )
+
+
+@router.get("/advice/gemini")
+def gemini_advice(userid: str):
+    try:
+        return get_gemini_advice(userid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate Gemini advice: {str(e)}"
         )
