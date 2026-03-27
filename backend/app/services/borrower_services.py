@@ -283,6 +283,28 @@ def _build_fallback_advice(prediction_data, shap_response, lime_response):
     return tips[:4]
 
 
+def _normalize_advice_text(raw_advice, prediction_value: float):
+    advice_text = str(raw_advice or "").strip()
+
+    if not advice_text:
+        if prediction_value >= 700:
+            return (
+                "Your score looks healthy. Focus on maintaining strong repayment behavior and low credit utilization "
+                "to preserve or improve your score."
+            )
+        return (
+            "Based on your profile, the key actions listed below can help improve your credit score over time."
+        )
+
+    if "No improvement advice requested" in advice_text:
+        return (
+            "Your score is currently in a stable range. Keep paying dues on time, avoid unnecessary new loans, "
+            "and maintain low utilization to strengthen your profile further."
+        )
+
+    return advice_text
+
+
 def _get_user_prediction_data(user_id: str):
     """
     Helper function to build prediction data dictionary for a given user
@@ -415,19 +437,27 @@ def get_gemini_advice(user_id: str):
                 shap_explanation=shap_raw,
                 api_key=api_key,
             )
+
+            prediction_value = _to_float(
+                gemini_result.get("prediction"),
+                shap_response.get("prediction") or lime_response.get("prediction") or 0.0,
+            )
+            tips = _build_fallback_advice(data, shap_response, lime_response)
+
             return {
-                "prediction": _to_float(gemini_result.get("prediction")),
-                "advice": gemini_result.get("advice", ""),
+                "prediction": prediction_value,
+                "advice": _normalize_advice_text(gemini_result.get("advice", ""), prediction_value),
                 "source": "gemini",
-                "improvementTips": _build_fallback_advice(data, shap_response, lime_response),
+                "improvementTips": tips,
             }
         except Exception as exc:
             logger.warning("Gemini advice generation failed: %s", exc)
+            tips = _build_fallback_advice(data, shap_response, lime_response)
             return {
                 "prediction": shap_response.get("prediction") or lime_response.get("prediction") or 0.0,
                 "advice": "AI advice is temporarily unavailable. Showing practical recommendations based on your profile.",
                 "source": "fallback",
-                "improvementTips": _build_fallback_advice(data, shap_response, lime_response),
+                "improvementTips": tips,
             }
     except ExplanationServiceError:
         raise

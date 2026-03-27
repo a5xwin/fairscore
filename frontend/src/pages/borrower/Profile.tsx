@@ -14,6 +14,28 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Pencil, Save, X, AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
+type SavedPersonal = {
+    dob: string;
+    gender: string;
+    state: string;
+    city: string;
+    phone: string;
+};
+
+type SavedEmployment = {
+    empProfile: string;
+    occupation: string;
+    customOccupation: string;
+    income: string;
+};
+
+type SavedCredit = {
+    creditHistoryYr: string;
+    creditHistoryMon: string;
+    loanNo: string;
+    assetValue: string;
+};
+
 const Profile = () => {
     const { user } = useAuth();
     
@@ -21,6 +43,26 @@ const Profile = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [savingSection, setSavingSection] = useState<string | null>(null);
+
+    const [savedPersonal, setSavedPersonal] = useState<SavedPersonal>({
+        dob: '',
+        gender: '',
+        state: '',
+        city: '',
+        phone: '',
+    });
+    const [savedEmployment, setSavedEmployment] = useState<SavedEmployment>({
+        empProfile: '',
+        occupation: '',
+        customOccupation: '',
+        income: '',
+    });
+    const [savedCredit, setSavedCredit] = useState<SavedCredit>({
+        creditHistoryYr: '',
+        creditHistoryMon: '',
+        loanNo: '',
+        assetValue: '',
+    });
     
     // Personal info
     const [personalEditing, setPersonalEditing] = useState(false);
@@ -79,19 +121,42 @@ const Profile = () => {
                 setPhone(profileData.phone || '');
 
                 setEmpProfile(profileData.empProfile || '');
+                let loadedOccupation = '';
+                let loadedCustomOccupation = '';
                 if (profileData.occupation && occupations.includes(profileData.occupation)) {
-                    setOccupation(profileData.occupation);
-                    setCustomOccupation('');
+                    loadedOccupation = profileData.occupation;
                 } else {
-                    setOccupation(profileData.occupation ? 'Other' : '');
-                    setCustomOccupation(profileData.occupation || '');
+                    loadedOccupation = profileData.occupation ? 'Other' : '';
+                    loadedCustomOccupation = profileData.occupation || '';
                 }
+                setOccupation(loadedOccupation);
+                setCustomOccupation(loadedCustomOccupation);
                 setIncome(profileData.income ? String(profileData.income) : '');
 
                 setCreditHistoryYr(String(profileData.creditHistoryYr ?? ''));
                 setCreditHistoryMon(String(profileData.creditHistoryMon ?? ''));
                 setLoanNo(profileData.loanNo ? String(profileData.loanNo) : '');
                 setAssetValue(profileData.assetValue ? String(profileData.assetValue) : '');
+
+                setSavedPersonal({
+                    dob: profileData.dob || '',
+                    gender: profileData.gender || '',
+                    state: profileData.state || '',
+                    city: profileData.city || '',
+                    phone: profileData.phone || '',
+                });
+                setSavedEmployment({
+                    empProfile: profileData.empProfile || '',
+                    occupation: loadedOccupation,
+                    customOccupation: loadedCustomOccupation,
+                    income: profileData.income ? String(profileData.income) : '',
+                });
+                setSavedCredit({
+                    creditHistoryYr: String(profileData.creditHistoryYr ?? ''),
+                    creditHistoryMon: String(profileData.creditHistoryMon ?? ''),
+                    loanNo: profileData.loanNo ? String(profileData.loanNo) : '',
+                    assetValue: profileData.assetValue ? String(profileData.assetValue) : '',
+                });
                 
             } catch (err) {
                 setError('Failed to load profile data. Please try again.');
@@ -126,6 +191,7 @@ const Profile = () => {
                 city,
                 phone,
             });
+            setSavedPersonal({ dob, gender, state, city, phone });
             setPersonalEditing(false);
             toast.success('Personal information updated successfully!');
         } catch (err: unknown) {
@@ -156,6 +222,7 @@ const Profile = () => {
                 occupation: occupation === 'Other' ? customOccupation : occupation,
                 income: Number(income),
             });
+            setSavedEmployment({ empProfile, occupation, customOccupation, income });
             setEmploymentEditing(false);
             toast.success('Employment information updated successfully!');
         } catch (err: unknown) {
@@ -182,6 +249,7 @@ const Profile = () => {
                 loanNo: Number(loanNo),
                 assetValue: Number(assetValue),
             });
+            setSavedCredit({ creditHistoryYr, creditHistoryMon, loanNo, assetValue });
             setCreditEditing(false);
             toast.success('Credit information updated successfully!');
         } catch (err: unknown) {
@@ -194,27 +262,27 @@ const Profile = () => {
 
     // Cancel handlers
     const handleCancelPersonal = () => {
-        setDob('');
-        setGender('');
-        setState('');
-        setCity('');
-        setPhone('');
+        setDob(savedPersonal.dob);
+        setGender(savedPersonal.gender);
+        setState(savedPersonal.state);
+        setCity(savedPersonal.city);
+        setPhone(savedPersonal.phone);
         setPersonalEditing(false);
     };
 
     const handleCancelEmployment = () => {
-        setEmpProfile('');
-        setOccupation('');
-        setCustomOccupation('');
-        setIncome('');
+        setEmpProfile(savedEmployment.empProfile);
+        setOccupation(savedEmployment.occupation);
+        setCustomOccupation(savedEmployment.customOccupation);
+        setIncome(savedEmployment.income);
         setEmploymentEditing(false);
     };
 
     const handleCancelCredit = () => {
-        setCreditHistoryYr('');
-        setCreditHistoryMon('');
-        setLoanNo('');
-        setAssetValue('');
+        setCreditHistoryYr(savedCredit.creditHistoryYr);
+        setCreditHistoryMon(savedCredit.creditHistoryMon);
+        setLoanNo(savedCredit.loanNo);
+        setAssetValue(savedCredit.assetValue);
         setCreditEditing(false);
     };
 
