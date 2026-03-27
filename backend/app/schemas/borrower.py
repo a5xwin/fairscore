@@ -30,3 +30,24 @@ class LoanUpdateSchema(BaseModel):
 class ApplyLoanSchema(BaseModel):
     userid: str
     lenderid: str
+
+class BorrowerPersonalUpdateSchema(BaseModel):
+    userid: str
+    dob: date
+    gender: str
+    state: str
+    city: str
+    phone: str
+
+class BorrowerEmploymentUpdateSchema(BaseModel):
+    userid: str
+    empProfile: str
+    occupation: str
+    income: float
+
+class BorrowerCreditUpdateSchema(BaseModel):
+    userid: str
+    creditHistoryYr: int
+    creditHistoryMon: int
+    loanNo: int
+    assetValue: float

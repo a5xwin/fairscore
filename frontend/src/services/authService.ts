@@ -81,6 +81,78 @@ export interface ApprovedLender {
     interest: number;
 }
 
+export interface ShapFactor {
+    feature: string;
+    direction: 'helps' | 'hurts';
+    impact: number;
+    summary: string;
+}
+
+export interface ShapExplanation {
+    prediction: number;
+    topFactors: ShapFactor[];
+    model: 'shap';
+}
+
+export interface LimeRule {
+    rule: string;
+    effect: 'helps' | 'hurts';
+    impact: number;
+    summary: string;
+}
+
+export interface LimeExplanation {
+    prediction: number;
+    rules: LimeRule[];
+    model: 'lime';
+}
+
+export interface GeminiAdvice {
+    prediction: number;
+    advice: string;
+    source: 'gemini' | 'fallback';
+    improvementTips: string[];
+}
+
+export interface BorrowerProfile {
+    id: string;
+    dob: string;
+    gender: string;
+    state: string;
+    city: string;
+    phone: string;
+    empProfile: string;
+    occupation: string;
+    income: number;
+    creditHistoryYr: number;
+    creditHistoryMon: number;
+    loanNo: number;
+    assetValue: number;
+}
+
+export interface BorrowerPersonalUpdatePayload {
+    userid: string;
+    dob: string;
+    gender: string;
+    state: string;
+    city: string;
+    phone: string;
+}
+
+export interface BorrowerEmploymentUpdatePayload {
+    userid: string;
+    empProfile: string;
+    occupation: string;
+    income: number;
+}
+
+export interface BorrowerCreditUpdatePayload {
+    userid: string;
+    creditHistoryYr: number;
+    creditHistoryMon: number;
+    loanNo: number;
+    assetValue: number;
+}
 // --- Lender interfaces ---
 
 export interface LenderDetailsPayload {
@@ -184,6 +256,41 @@ export const authService = {
         const response = await api.get('/borrower/approved-lenders', { params: { userid } });
         return response.data;
     },
+
+    getShapExplanation: async (userid: string): Promise<ShapExplanation> => {
+        const response = await api.get('/borrower/explain/shap', { params: { userid } });
+        return response.data;
+    },
+
+    getLimeExplanation: async (userid: string): Promise<LimeExplanation> => {
+        const response = await api.get('/borrower/explain/lime', { params: { userid } });
+        return response.data;
+    },
+
+    getGeminiAdvice: async (userid: string): Promise<GeminiAdvice> => {
+        const response = await api.get('/borrower/advice/gemini', { params: { userid } });
+        return response.data;
+    },
+
+        getBorrowerProfile: async (userid: string): Promise<BorrowerProfile> => {
+            const response = await api.get('/borrower/profile-details', { params: { userid } });
+            return response.data;
+        },
+
+        updatePersonalInfo: async (data: BorrowerPersonalUpdatePayload): Promise<{ status: string }> => {
+            const response = await api.put('/borrower/personal-update', data);
+            return response.data;
+        },
+
+        updateEmploymentInfo: async (data: BorrowerEmploymentUpdatePayload): Promise<{ status: string }> => {
+            const response = await api.put('/borrower/employment-update', data);
+            return response.data;
+        },
+
+        updateCreditInfo: async (data: BorrowerCreditUpdatePayload): Promise<{ status: string }> => {
+            const response = await api.put('/borrower/credit-update', data);
+            return response.data;
+        },
 
     getProfile: async () => {
         const response = await api.get('/borrower/profile');

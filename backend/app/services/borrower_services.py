@@ -2,6 +2,18 @@ from app.db.supabase import supabase
 from datetime import datetime
 import sys
 import os
+import logging
+from uuid import UUID
+
+
+logger = logging.getLogger(__name__)
+
+
+class ExplanationServiceError(Exception):
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
 
 # Add parent directory to path for Utilities import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -126,26 +138,190 @@ def estimated_credit_line(score, income, ltv):
     return int(base * score_factor * ltv_penalty)
 
 
+def _ensure_predictor_available():
+    if not ML_PREDICTOR_AVAILABLE or _credit_predictor is None:
+        raise ExplanationServiceError(503, "ML explanation service is unavailable")
+
+
+def _to_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _extract_table_records(table):
+    if table is None:
+        return []
+    if hasattr(table, "to_dict"):
+        try:
+            return table.to_dict(orient="records")
+        except TypeError:
+            pass
+    if isinstance(table, list):
+        return table
+    return []
+
+
+def _format_feature_label(raw_feature: str) -> str:
+    if not isinstance(raw_feature, str):
+        return "Unknown"
+    if "<=" in raw_feature or ">=" in raw_feature or "<" in raw_feature or ">" in raw_feature:
+        return raw_feature
+    return raw_feature.replace("_", " ")
+
+
+def _build_tip_from_feature(feature_name: str):
+    tips_map = {
+        "Number of Existing Loans": "Reducing the number of active loans can improve your score over time.",
+        "LTV Ratio": "Lowering the loan-to-value ratio by increasing down payment can reduce risk.",
+        "Income": "A higher and stable income generally helps creditworthiness.",
+        "Credit History Length": "Maintaining older active credit accounts can improve history length.",
+        "Existing Customer": "Keeping a healthy repayment track record with your bank helps trust.",
+    }
+    return tips_map.get(feature_name)
+
+
+def _format_shap_response(raw_shap):
+    feature_names = raw_shap.get("feature_names") or []
+    shap_values = raw_shap.get("shap_values")
+    sample_shap_values = []
+
+    if shap_values is not None:
+        try:
+            sample_shap_values = [float(v) for v in shap_values[0]]
+        except Exception:
+            sample_shap_values = []
+
+    shap_by_feature = {}
+    for idx, feature_name in enumerate(feature_names):
+        if idx < len(sample_shap_values):
+            shap_by_feature[feature_name] = sample_shap_values[idx]
+
+    feature_rows = _extract_table_records(raw_shap.get("feature_importance"))
+    top_factors = []
+
+    for row in feature_rows[:8]:
+        feature_name = row.get("Feature")
+        if not feature_name:
+            continue
+        raw_contribution = shap_by_feature.get(feature_name)
+        if raw_contribution is None:
+            raw_contribution = _to_float(row.get("SHAP_Importance"), 0.0)
+
+        direction = "helps" if raw_contribution >= 0 else "hurts"
+        impact = abs(_to_float(raw_contribution))
+        top_factors.append({
+            "feature": _format_feature_label(feature_name),
+            "direction": direction,
+            "impact": round(impact, 4),
+            "summary": f"{_format_feature_label(feature_name)} {direction} your score.",
+        })
+
+    prediction = _to_float(raw_shap.get("prediction"))
+    return {
+        "prediction": prediction,
+        "topFactors": top_factors,
+        "model": "shap",
+    }
+
+
+def _format_lime_response(raw_lime):
+    feature_rows = _extract_table_records(raw_lime.get("feature_contributions"))
+    rules = []
+
+    for row in feature_rows[:8]:
+        rule = row.get("Feature_Rule")
+        contribution = _to_float(row.get("Contribution"), 0.0)
+        if not rule:
+            continue
+        rules.append({
+            "rule": _format_feature_label(rule),
+            "effect": "helps" if contribution >= 0 else "hurts",
+            "impact": round(abs(contribution), 4),
+            "summary": f"{_format_feature_label(rule)} {'improves' if contribution >= 0 else 'reduces'} your score.",
+        })
+
+    prediction = _to_float(raw_lime.get("prediction"))
+    return {
+        "prediction": prediction,
+        "rules": rules,
+        "model": "lime",
+    }
+
+
+def _build_fallback_advice(prediction_data, shap_response, lime_response):
+    tips = []
+
+    for factor in shap_response.get("topFactors", []):
+        if factor.get("direction") != "hurts":
+            continue
+        tip = _build_tip_from_feature(factor.get("feature"))
+        if tip and tip not in tips:
+            tips.append(tip)
+        if len(tips) >= 4:
+            break
+
+    if len(tips) < 4:
+        for rule in lime_response.get("rules", []):
+            if rule.get("effect") == "hurts":
+                tip = f"Work on improving the condition: {rule.get('rule')}"
+                if tip not in tips:
+                    tips.append(tip)
+            if len(tips) >= 4:
+                break
+
+    if not tips:
+        income = _to_float(prediction_data.get("Income"))
+        loan_count = int(_to_float(prediction_data.get("Number of Existing Loans")))
+        if income > 0:
+            tips.append("Maintaining steady and higher income can improve score outcomes.")
+        if loan_count > 0:
+            tips.append("Reducing simultaneous active loans can lower perceived credit risk.")
+        tips.append("Pay all EMIs and credit dues on time to build a positive repayment history.")
+
+    return tips[:4]
+
+
 def _get_user_prediction_data(user_id: str):
     """
     Helper function to build prediction data dictionary for a given user
     from the database.
     """
-    if not ML_PREDICTOR_AVAILABLE or _credit_predictor is None:
-        raise Exception("ML Predictor is not available")
-        
-    borrower_res = supabase.table("borrower").select("*").eq("id", user_id).single().execute()
-    if not borrower_res.data:
-        raise Exception("Borrower not found")
-        
-    b_data = borrower_res.data
+    _ensure_predictor_available()
+
+    if not user_id:
+        raise ExplanationServiceError(400, "userid is required")
+
+    try:
+        UUID(str(user_id))
+    except (TypeError, ValueError) as exc:
+        raise ExplanationServiceError(400, "userid must be a valid UUID") from exc
+
+    try:
+        borrower_res = supabase.table("borrower").select("*").eq("id", user_id).limit(1).execute()
+    except Exception as exc:
+        logger.exception("Failed to fetch borrower record for explanation")
+        raise ExplanationServiceError(500, "Failed to fetch borrower details") from exc
+
+    records = borrower_res.data or []
+    if not records:
+        raise ExplanationServiceError(404, "Borrower not found")
+
+    b_data = records[0]
     
     # Calculate age from DOB
     dob = b_data.get("dob")
-    if isinstance(dob, str):
-        dob_date = datetime.strptime(dob, '%Y-%m-%d')
-    else:
-        dob_date = dob
+    if not dob:
+        raise ExplanationServiceError(400, "Borrower date of birth is missing")
+
+    try:
+        if isinstance(dob, str):
+            dob_date = datetime.strptime(dob, '%Y-%m-%d')
+        else:
+            dob_date = dob
+    except Exception as exc:
+        raise ExplanationServiceError(400, "Borrower date of birth is invalid") from exc
     today = datetime.now()
     age = today.year - dob_date.year - ((today.month, today.day) < (dob_date.month, dob_date.day))
     
@@ -164,32 +340,100 @@ def _get_user_prediction_data(user_id: str):
         'Occupation': b_data.get("occupation")
     }
     
+    required_fields = [
+        'Income',
+        'Number of Existing Loans',
+        'State',
+        'City',
+        'Employment Profile',
+        'Occupation',
+    ]
+    missing = [field for field in required_fields if prediction_data.get(field) in [None, ""]]
+    if missing:
+        raise ExplanationServiceError(400, f"Borrower profile is incomplete: {', '.join(missing)}")
+
     return prediction_data
 
 
 def get_shap_explanation(user_id: str):
-    data = _get_user_prediction_data(user_id)
-    return _credit_predictor.explain_prediction_shap(data)
+    try:
+        data = _get_user_prediction_data(user_id)
+        raw_shap = _credit_predictor.explain_prediction_shap(data)
+        return _format_shap_response(raw_shap)
+    except ExplanationServiceError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to generate SHAP explanation")
+        raise ExplanationServiceError(500, "Failed to generate SHAP explanation") from exc
 
 
 def get_lime_explanation(user_id: str):
-    data = _get_user_prediction_data(user_id)
-    return _credit_predictor.explain_prediction_lime(data)
+    try:
+        data = _get_user_prediction_data(user_id)
+        raw_lime = _credit_predictor.explain_prediction_lime(data)
+        return _format_lime_response(raw_lime)
+    except ExplanationServiceError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to generate LIME explanation")
+        raise ExplanationServiceError(500, "Failed to generate LIME explanation") from exc
 
 
 def get_gemini_advice(user_id: str):
-    data = _get_user_prediction_data(user_id)
-    # Get SHAP explanation first as it's required/helpful for Gemini advice
     try:
-        shap_exp = _credit_predictor.explain_prediction_shap(data)
-    except Exception as e:
-        print(f"Warning: Could not get SHAP explanation for Gemini advice: {e}")
-        shap_exp = None
-        
-    # Assume the GEMINI_API_KEY environment variable is set or uses fallback
-    import os
-    api_key = os.getenv("GEMINI_API_KEY")
-    return _credit_predictor.get_credit_improvement_advice(data, shap_explanation=shap_exp, api_key=api_key)
+        data = _get_user_prediction_data(user_id)
+
+        try:
+            shap_raw = _credit_predictor.explain_prediction_shap(data)
+            shap_response = _format_shap_response(shap_raw)
+        except Exception as exc:
+            logger.warning("Could not generate SHAP data for Gemini advice: %s", exc)
+            shap_raw = None
+            shap_response = {"prediction": 0.0, "topFactors": []}
+
+        try:
+            lime_raw = _credit_predictor.explain_prediction_lime(data)
+            lime_response = _format_lime_response(lime_raw)
+        except Exception as exc:
+            logger.warning("Could not generate LIME data for Gemini fallback advice: %s", exc)
+            lime_response = {"prediction": 0.0, "rules": []}
+
+        api_key = os.getenv("GEMINI_API_KEY")
+
+        if not api_key:
+            tips = _build_fallback_advice(data, shap_response, lime_response)
+            return {
+                "prediction": shap_response.get("prediction") or lime_response.get("prediction") or 0.0,
+                "advice": "AI advice is temporarily unavailable. Showing practical recommendations based on your profile.",
+                "source": "fallback",
+                "improvementTips": tips,
+            }
+
+        try:
+            gemini_result = _credit_predictor.get_credit_improvement_advice(
+                data,
+                shap_explanation=shap_raw,
+                api_key=api_key,
+            )
+            return {
+                "prediction": _to_float(gemini_result.get("prediction")),
+                "advice": gemini_result.get("advice", ""),
+                "source": "gemini",
+                "improvementTips": _build_fallback_advice(data, shap_response, lime_response),
+            }
+        except Exception as exc:
+            logger.warning("Gemini advice generation failed: %s", exc)
+            return {
+                "prediction": shap_response.get("prediction") or lime_response.get("prediction") or 0.0,
+                "advice": "AI advice is temporarily unavailable. Showing practical recommendations based on your profile.",
+                "source": "fallback",
+                "improvementTips": _build_fallback_advice(data, shap_response, lime_response),
+            }
+    except ExplanationServiceError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to generate Gemini advice")
+        raise ExplanationServiceError(500, "Failed to generate Gemini advice") from exc
 
 
 # -----------------------------
@@ -273,6 +517,33 @@ def get_credit_info(user_id: str):
 
 
 # -----------------------------
+# GET /borrower/profile-details
+# -----------------------------
+def get_profile_details(user_id: str):
+    res = supabase.table("borrower") \
+        .select("id, dob, gender, state, city, phone_no, employment_profile, occupation, income, credit_history_length, loan_no, asset_value") \
+        .eq("id", user_id).single().execute()
+
+    credit_history_length = res.data.get("credit_history_length") or 0
+
+    return {
+        "id": res.data.get("id"),
+        "dob": str(res.data.get("dob")) if res.data.get("dob") else "",
+        "gender": res.data.get("gender") or "",
+        "state": res.data.get("state") or "",
+        "city": res.data.get("city") or "",
+        "phone": res.data.get("phone_no") or "",
+        "empProfile": res.data.get("employment_profile") or "",
+        "occupation": res.data.get("occupation") or "",
+        "income": res.data.get("income") or 0,
+        "creditHistoryYr": credit_history_length // 12,
+        "creditHistoryMon": credit_history_length % 12,
+        "loanNo": res.data.get("loan_no") or 0,
+        "assetValue": res.data.get("asset_value") or 0,
+    }
+
+
+# -----------------------------
 # GET /borrower/loan-info
 # -----------------------------
 def get_loan_info(user_id: str):
@@ -303,6 +574,62 @@ def update_loan_info(data):
             "purpose": data.purpose
         }) \
         .eq("borrower_id", data.userid) \
+        .execute()
+
+    return {"status": "updated"}
+
+
+# PUT /borrower/personal-update
+# -----------------------------
+def update_personal_info(data):
+    ltv = calculate_ltv(
+        supabase.table("borrower_loan_details") \
+            .select("loan_amount") \
+            .eq("borrower_id", data.userid).single().execute().data["loan_amount"],
+        data.assetValue if hasattr(data, 'assetValue') else 0
+    )
+    
+    supabase.table("borrower") \
+        .update({
+            "dob": str(data.dob),
+            "gender": data.gender,
+            "state": data.state,
+            "city": data.city,
+            "phone_no": data.phone
+        }) \
+        .eq("id", data.userid) \
+        .execute()
+
+    return {"status": "updated"}
+
+
+# PUT /borrower/employment-update
+# --------------------------------
+def update_employment_info(data):
+    supabase.table("borrower") \
+        .update({
+            "employment_profile": data.empProfile,
+            "occupation": data.occupation,
+            "income": data.income
+        }) \
+        .eq("id", data.userid) \
+        .execute()
+
+    return {"status": "updated"}
+
+
+# PUT /borrower/credit-update
+# ----------------------------
+def update_credit_info(data):
+    credit_history_months = to_months(data.creditHistoryYr, data.creditHistoryMon)
+    
+    supabase.table("borrower") \
+        .update({
+            "credit_history_length": credit_history_months,
+            "loan_no": data.loanNo,
+            "asset_value": data.assetValue
+        }) \
+        .eq("id", data.userid) \
         .execute()
 
     return {"status": "updated"}

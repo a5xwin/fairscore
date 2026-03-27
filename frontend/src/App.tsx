@@ -19,6 +19,7 @@ import BorrowerDashboard from "./pages/borrower/BorrowerDashboard";
 import LoanDetails from "./pages/borrower/LoanDetails";
 import LoanApply from "./pages/borrower/LoanApply";
 import Approvals from "./pages/borrower/Approvals";
+import Profile from "./pages/borrower/Profile";
 
 // Lender Pages
 import LenderOnboarding from "./pages/lender/LenderOnboarding";
@@ -49,6 +50,7 @@ const App = () => (
                 <Layout>
                   <Routes>
                     <Route path="dashboard" element={<BorrowerDashboard />} />
+                    <Route path="profile" element={<Profile />} />
                     <Route path="loan-details" element={<LoanDetails />} />
                     <Route path="apply" element={<LoanApply />} />
                     <Route path="approvals" element={<Approvals />} />

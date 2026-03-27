@@ -4,12 +4,9 @@ import { useAuth } from '../../context/AuthContext';
 import {
     LayoutDashboard,
     CreditCard,
-    FileText,
-    Users,
     LogOut,
     Settings,
     Menu,
-    X,
     CheckCircle,
     Send,
     ClipboardList
@@ -67,6 +64,19 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                 </nav>
             </div>
             <div className="px-4 mt-auto">
+                {user.role === 'borrower' && (
+                    <Link
+                        to="/borrower/profile"
+                        onClick={() => setIsMobileOpen(false)}
+                        className={cn(
+                            "mb-2 flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all hover:bg-accent hover:text-accent-foreground",
+                            location.pathname === '/borrower/profile' ? "bg-accent/80 text-accent-foreground" : "text-muted-foreground"
+                        )}
+                    >
+                        <Settings className="h-4 w-4" />
+                        Profile
+                    </Link>
+                )}
                 <Button variant="ghost" className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive" onClick={logout}>
                     <LogOut className="h-4 w-4" />
                     Logout
