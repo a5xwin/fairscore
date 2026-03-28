@@ -4,7 +4,9 @@ from dotenv import load_dotenv
 import os
 
 # Load .env from the backend/ directory (one level up from app/)
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
+if not load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")):
+    print("Warning: .env file not found. Make sure to create one with the necessary environment variables.")
+    
 
 from app.routes.auth import router as auth_router
 from app.routes.borrower import router as borrower_router

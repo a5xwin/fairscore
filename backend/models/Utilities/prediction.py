@@ -365,8 +365,24 @@ class CreditScorePredictor:
         # Prepare training data
         if training_data is None:
             if self._training_data is None:
-                # Use the input data as training reference
-                training_data = df
+                # Try to load a default training data from the original dataset
+                try:
+                    data_path = os.path.join(os.path.dirname(self.models_dir), 'dataset', 'credit_data.csv')
+                    if os.path.exists(data_path):
+                        df_train = pd.read_csv(data_path)
+                        # Keep only required columns
+                        for col in self.required_features:
+                            if col not in df_train.columns:
+                                df_train[col] = 0
+                        df_train = df_train[self.required_features]
+                        # Use a sample for training data to keep it fast
+                        self._training_data = self._validate_input(df_train.sample(min(1000, len(df_train)), random_state=42))
+                        training_data = self._training_data
+                    else:
+                        training_data = df
+                except Exception as e:
+                    print(f"Warning: Could not load default training data: {e}")
+                    training_data = df
             else:
                 training_data = self._training_data
         else:

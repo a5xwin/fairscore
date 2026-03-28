@@ -423,6 +423,7 @@ def get_gemini_advice(user_id: str):
         api_key = os.getenv("GEMINI_API_KEY")
 
         if not api_key:
+            print("Warning: GEMINI_API_KEY not set, falling back to practical advice tips")
             tips = _build_fallback_advice(data, shap_response, lime_response)
             return {
                 "prediction": shap_response.get("prediction") or lime_response.get("prediction") or 0.0,
