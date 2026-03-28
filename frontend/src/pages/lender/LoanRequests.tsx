@@ -182,13 +182,13 @@ const LoanRequests = () => {
 
             {/* Review Dialog */}
             <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
-                <DialogContent className="sm:max-w-2xl">
+                <DialogContent className="flex max-h-[90vh] flex-col overflow-hidden sm:max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Review Borrower</DialogTitle>
                         <DialogDescription>Review the borrower's details before making a decision.</DialogDescription>
                     </DialogHeader>
                     {selected && (
-                        <div className="grid gap-5 py-4 text-sm">
+                        <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto py-4 pr-1 text-sm">
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
                                     <p className="text-muted-foreground">Name</p>

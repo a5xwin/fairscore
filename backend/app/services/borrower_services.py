@@ -3,6 +3,8 @@ from datetime import datetime
 import sys
 import os
 import logging
+import json
+import re
 from uuid import UUID
 
 
@@ -171,6 +173,208 @@ def _format_feature_label(raw_feature: str) -> str:
     return raw_feature.replace("_", " ")
 
 
+def _extract_json_array(text: str):
+    if not isinstance(text, str):
+        return []
+
+    cleaned = text.strip()
+    if not cleaned:
+        return []
+
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        return []
+
+    json_str = cleaned[start:end + 1]
+    try:
+        parsed = json.loads(json_str)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _fallback_humanize_lime_rule(rule_text: str):
+    cleaned_rule = _format_feature_label(rule_text)
+    match = re.match(r"^(.*?)(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$", cleaned_rule)
+    if not match:
+        return cleaned_rule
+
+    feature, operator, raw_value = match.groups()
+    feature = feature.strip()
+
+    try:
+        numeric_value = float(raw_value)
+    except (TypeError, ValueError):
+        numeric_value = None
+
+    has_model_scaled_value = numeric_value is not None and (numeric_value < 0 or numeric_value % 1 != 0)
+    if has_model_scaled_value:
+        if operator in ["<=", "<"]:
+            return f"{feature} is on the lower side"
+        if operator in [">=", ">"]:
+            return f"{feature} is on the higher side"
+        return f"{feature} is around this level"
+
+    value = str(int(numeric_value)) if numeric_value is not None and numeric_value.is_integer() else raw_value
+    if operator == "<=":
+        return f"{feature} is {value} or below"
+    if operator == ">=":
+        return f"{feature} is {value} or above"
+    if operator == "<":
+        return f"{feature} is below {value}"
+    if operator == ">":
+        return f"{feature} is above {value}"
+    return f"{feature} is {value}"
+
+
+def _extract_rule_feature_and_operator(raw_rule: str):
+    cleaned_rule = _format_feature_label(raw_rule)
+    match = re.match(r"^(.*?)(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$", cleaned_rule)
+    if not match:
+        return str(cleaned_rule or "").lower(), None
+    feature, operator, _ = match.groups()
+    return str(feature or "").strip().lower(), operator
+
+
+def _resolve_lime_effect_by_domain(raw_rule: str, fallback_effect: str):
+    feature, operator = _extract_rule_feature_and_operator(raw_rule)
+    if operator is None:
+        return fallback_effect
+
+    if operator in ["<=", "<"]:
+        trend = "lower"
+    elif operator in [">=", ">"]:
+        trend = "higher"
+    else:
+        trend = "neutral"
+
+    if trend == "neutral":
+        return fallback_effect
+
+    lower_is_better_features = [
+        "number of existing loans",
+        "existing loans",
+        "loan count",
+        "debt to income ratio",
+        "dti",
+        "utilization",
+        "late payment",
+        "overdue",
+        "ltv ratio",
+    ]
+
+    higher_is_better_features = [
+        "credit history length",
+        "income",
+        "monthly income",
+        "savings",
+        "payment history",
+    ]
+
+    lower_is_better = any(token in feature for token in lower_is_better_features)
+    higher_is_better = any(token in feature for token in higher_is_better_features)
+
+    if lower_is_better:
+        return "helps" if trend == "lower" else "hurts"
+    if higher_is_better:
+        return "helps" if trend == "higher" else "hurts"
+
+    return fallback_effect
+
+
+def _fallback_useful_lime_rule(rule_text: str, impact: float):
+    lowered = str(rule_text or "").lower()
+    non_actionable_tokens = ["city", "existing customer", "customer id", "user id", "id"]
+    if any(token in lowered for token in non_actionable_tokens):
+        return False
+    return abs(_to_float(impact)) >= 0.1
+
+
+def _ensure_non_empty_lime_rules(filtered_rules, raw_rules):
+    if filtered_rules:
+        return filtered_rules
+
+    fallback = []
+    for rule in raw_rules[:4]:
+        source_rule = rule.get("rawRule") or rule.get("rule", "")
+        source_summary = rule.get("baseSummary") or rule.get("summary", "")
+        effect = rule.get("effect", "hurts")
+        fallback.append({
+            **rule,
+            "rule": source_rule,
+            "summary": source_summary or f"{source_rule} {'improves' if effect == 'helps' else 'reduces'} your score.",
+            "useful": True,
+        })
+    return fallback
+
+
+def _simplify_lime_rules_with_gemini(rules, prediction_data, api_key: str):
+    if not api_key or not rules:
+        return []
+
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+
+        prompt_payload = []
+        for index, rule in enumerate(rules):
+            prompt_payload.append({
+                "index": index,
+                "rule": rule.get("rule", ""),
+                "effect": rule.get("effect", "hurts"),
+                "impact": rule.get("impact", 0.0),
+                "summary": rule.get("summary", ""),
+            })
+
+        prompt = (
+            "You are rewriting credit-score rule explanations for non-technical users. "
+            "Rewrite each item in simple plain English that any common person can understand. "
+            "Do not use symbols like <=, >=, <, >, = or model-scaled numeric thresholds unless clearly meaningful. "
+            "Filter out vague or non-actionable items as useful=false (for example pure location/category labels). "
+            "Keep the response strictly as a JSON array with one object per input row and fields: "
+            "index (number), readable_rule (string), readable_summary (string), useful (boolean), effect (helps|hurts). "
+            "Do not include markdown or extra keys.\n\n"
+            f"Borrower context: {prediction_data}\n"
+            f"Rules: {prompt_payload}"
+        )
+
+        response = model.generate_content(prompt)
+        response_text = response.text if hasattr(response, "text") else str(response)
+        parsed = _extract_json_array(response_text)
+        if not parsed:
+            return []
+
+        normalized = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("index")
+            if not isinstance(idx, int):
+                continue
+            effect = str(item.get("effect", "")).strip().lower()
+            if effect not in ["helps", "hurts"]:
+                effect = "hurts"
+            normalized.append({
+                "index": idx,
+                "readable_rule": str(item.get("readable_rule", "")).strip(),
+                "readable_summary": str(item.get("readable_summary", "")).strip(),
+                "useful": bool(item.get("useful", True)),
+                "effect": effect,
+            })
+
+        return normalized
+    except Exception as exc:
+        logger.warning("Gemini LIME simplification failed: %s", exc)
+        return []
+
+
 def _build_tip_from_feature(feature_name: str):
     tips_map = {
         "Number of Existing Loans": "Reducing the number of active loans can improve your score over time.",
@@ -226,7 +430,7 @@ def _format_shap_response(raw_shap):
     }
 
 
-def _format_lime_response(raw_lime):
+def _format_lime_response(raw_lime, prediction_data=None, api_key: str = ""):
     feature_rows = _extract_table_records(raw_lime.get("feature_contributions"))
     rules = []
 
@@ -235,12 +439,60 @@ def _format_lime_response(raw_lime):
         contribution = _to_float(row.get("Contribution"), 0.0)
         if not rule:
             continue
+        base_rule = _format_feature_label(rule)
+        base_effect = "helps" if contribution >= 0 else "hurts"
+        resolved_effect = _resolve_lime_effect_by_domain(base_rule, base_effect)
         rules.append({
-            "rule": _format_feature_label(rule),
-            "effect": "helps" if contribution >= 0 else "hurts",
+            "rule": base_rule,
+            "effect": resolved_effect,
             "impact": round(abs(contribution), 4),
-            "summary": f"{_format_feature_label(rule)} {'improves' if contribution >= 0 else 'reduces'} your score.",
+            "summary": f"{base_rule} {'improves' if resolved_effect == 'helps' else 'reduces'} your score.",
+            "baseSummary": f"{base_rule} {'improves' if resolved_effect == 'helps' else 'reduces'} your score.",
+            "rawRule": base_rule,
+            "useful": _fallback_useful_lime_rule(base_rule, contribution),
         })
+
+    raw_rules_snapshot = [dict(rule) for rule in rules]
+
+    gemini_rows = _simplify_lime_rules_with_gemini(rules, prediction_data or {}, api_key)
+    if gemini_rows:
+        by_index = {item["index"]: item for item in gemini_rows}
+        updated_rules = []
+        for idx, rule in enumerate(rules):
+            rewritten = by_index.get(idx)
+            if rewritten:
+                readable_rule = rewritten.get("readable_rule") or _fallback_humanize_lime_rule(rule.get("rule", ""))
+                incoming_effect = rewritten.get("effect", rule.get("effect", "hurts"))
+                final_effect = _resolve_lime_effect_by_domain(rule.get("rawRule", rule.get("rule", "")), incoming_effect)
+                rule["rule"] = readable_rule
+                rule["summary"] = f"{readable_rule} {'improves' if final_effect == 'helps' else 'reduces'} your score."
+                rule["effect"] = final_effect
+                rule["useful"] = bool(rewritten.get("useful", rule.get("useful", True)))
+            else:
+                source_rule = rule.get("rawRule") or rule.get("rule", "")
+                source_summary = rule.get("baseSummary") or rule.get("summary", "")
+                fallback_effect = _resolve_lime_effect_by_domain(source_rule, rule.get("effect", "hurts"))
+                rule["rule"] = source_rule
+                rule["effect"] = fallback_effect
+                rule["summary"] = source_summary or f"{source_rule} {'improves' if fallback_effect == 'helps' else 'reduces'} your score."
+                rule["useful"] = _fallback_useful_lime_rule(source_rule, rule.get("impact", 0.0))
+
+            if rule.get("useful", True):
+                updated_rules.append(rule)
+        rules = _ensure_non_empty_lime_rules(updated_rules, raw_rules_snapshot)
+    else:
+        fallback_rules = []
+        for rule in rules:
+            source_rule = rule.get("rawRule") or rule.get("rule", "")
+            source_summary = rule.get("baseSummary") or rule.get("summary", "")
+            fallback_effect = _resolve_lime_effect_by_domain(source_rule, rule.get("effect", "hurts"))
+            rule["rule"] = source_rule
+            rule["effect"] = fallback_effect
+            rule["summary"] = source_summary or f"{source_rule} {'improves' if fallback_effect == 'helps' else 'reduces'} your score."
+            rule["useful"] = _fallback_useful_lime_rule(source_rule, rule.get("impact", 0.0))
+            if rule.get("useful", True):
+                fallback_rules.append(rule)
+        rules = _ensure_non_empty_lime_rules(fallback_rules, raw_rules_snapshot)
 
     prediction = _to_float(raw_lime.get("prediction"))
     return {
@@ -393,7 +645,8 @@ def get_lime_explanation(user_id: str):
     try:
         data = _get_user_prediction_data(user_id)
         raw_lime = _credit_predictor.explain_prediction_lime(data)
-        return _format_lime_response(raw_lime)
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        return _format_lime_response(raw_lime, prediction_data=data, api_key=api_key)
     except ExplanationServiceError:
         raise
     except Exception as exc:

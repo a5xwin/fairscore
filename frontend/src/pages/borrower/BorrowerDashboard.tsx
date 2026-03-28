@@ -20,6 +20,98 @@ const riskConfig: Record<string, { color: string; icon: typeof ShieldCheck; labe
     high: { color: 'bg-red-100 text-red-800 border-red-200', icon: AlertTriangle, label: 'High Risk' },
 };
 
+const normalizeRuleText = (text: string) => text.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+
+const extractFeatureFromRule = (rawRule: string) => {
+    const cleanedRule = normalizeRuleText(rawRule);
+    const match = cleanedRule.match(/^(.*?)(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$/);
+    if (!match) return cleanedRule.toLowerCase();
+    return normalizeRuleText(match[1]).toLowerCase();
+};
+
+const extractRuleOperator = (rawRule: string) => {
+    const cleanedRule = normalizeRuleText(rawRule);
+    const match = cleanedRule.match(/^(.*?)(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$/);
+    return match?.[2] ?? null;
+};
+
+const getDisplayLimeEffect = (rawRule: string, fallback: 'helps' | 'hurts') => {
+    const feature = extractFeatureFromRule(rawRule);
+    const operator = extractRuleOperator(rawRule);
+
+    if (!operator) return fallback;
+
+    const trend = operator === '<=' || operator === '<' ? 'lower' : operator === '>=' || operator === '>' ? 'higher' : 'neutral';
+    if (trend === 'neutral') return fallback;
+
+    const lowerIsBetterFeatures = [
+        'number of existing loans',
+        'existing loans',
+        'loan count',
+        'debt to income ratio',
+        'dti',
+        'utilization',
+        'late payment',
+        'overdue',
+    ];
+
+    const higherIsBetterFeatures = [
+        'credit history length',
+        'income',
+        'monthly income',
+        'savings',
+        'payment history',
+    ];
+
+    const lowerIsBetter = lowerIsBetterFeatures.some((token) => feature.includes(token));
+    const higherIsBetter = higherIsBetterFeatures.some((token) => feature.includes(token));
+
+    if (lowerIsBetter) return trend === 'lower' ? 'helps' : 'hurts';
+    if (higherIsBetter) return trend === 'higher' ? 'helps' : 'hurts';
+
+    return fallback;
+};
+
+const isUsefulLimeRule = (rule: { rule: string; impact: number }, readableRule: string) => {
+    const feature = extractFeatureFromRule(rule.rule);
+    const nonActionableFeatures = ['city', 'existing customer', 'customer id', 'user id', 'id'];
+    const hasNonActionableFeature = nonActionableFeatures.some((token) => feature.includes(token));
+    const hasVagueText = readableRule.toLowerCase().includes('around this level');
+    const hasMeaningfulImpact = Math.abs(rule.impact) >= 1;
+
+    return !hasNonActionableFeature && !hasVagueText && hasMeaningfulImpact;
+};
+
+const toReadableLimeRule = (rawRule: string) => {
+    const cleanedRule = normalizeRuleText(rawRule);
+    const match = cleanedRule.match(/^(.*?)(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$/);
+
+    if (!match) return cleanedRule;
+
+    const [, rawFeature, operator, rawValue] = match;
+    const feature = normalizeRuleText(rawFeature);
+    const numericValue = Number(rawValue);
+    const hasModelScaledValue = Number.isFinite(numericValue) && (!Number.isInteger(numericValue) || numericValue < 0);
+
+    if (hasModelScaledValue) {
+        if (operator === '<=' || operator === '<') return `${feature} is on the lower side`;
+        if (operator === '>=' || operator === '>') return `${feature} is on the higher side`;
+        return `${feature} is around this level`;
+    }
+
+    const value = Number.isFinite(numericValue) ? numericValue.toString() : rawValue;
+
+    if (operator === '<=') return `${feature} is ${value} or below`;
+    if (operator === '>=') return `${feature} is ${value} or above`;
+    if (operator === '<') return `${feature} is below ${value}`;
+    if (operator === '>') return `${feature} is above ${value}`;
+    return `${feature} is ${value}`;
+};
+
+const toReadableLimeSummary = (ruleText: string, effect: 'helps' | 'hurts') => {
+    return `${ruleText} ${effect === 'helps' ? 'helps' : 'hurts'} your credit score.`;
+};
+
 const BorrowerDashboard = () => {
     const { user } = useAuth();
     const [creditInfo, setCreditInfo] = useState<CreditInfo | null>(null);
@@ -310,12 +402,37 @@ const BorrowerDashboard = () => {
                                     {limeExplanation?.rules?.length ? (
                                         <>
                                             <div className="text-xs text-muted-foreground bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
-                                                <p><strong>What you're seeing:</strong> These are specific conditions in your profile that explain how your score is calculated.</p>
+                                                <p><strong>What you're seeing:</strong> These are the most useful and actionable conditions from your profile that explain your score.</p>
                                             </div>
                                             {(() => {
-                                                const maxImpact = getMaxImpact(limeExplanation.rules);
-                                                return limeExplanation.rules.map((rule, index) => {
-                                                    const isNegative = rule.effect === 'hurts';
+                                                const preparedRules = limeExplanation.rules
+                                                    .map((rule) => {
+                                                        const displayEffect = rule.effect;
+                                                        const readableRule = toReadableLimeRule(rule.rule);
+                                                        const backendSummary = (rule.summary || '').trim();
+                                                        const readableSummary = backendSummary || toReadableLimeSummary(readableRule, displayEffect);
+                                                        return {
+                                                            ...rule,
+                                                            displayEffect,
+                                                            readableRule,
+                                                            readableSummary,
+                                                        };
+                                                    });
+
+                                                const usefulRules = preparedRules.filter((rule) => isUsefulLimeRule(rule, rule.readableRule));
+                                                const rulesToShow = usefulRules.length ? usefulRules : preparedRules;
+
+                                                if (!rulesToShow.length) {
+                                                    return (
+                                                        <p className="text-sm text-muted-foreground">
+                                                            Useful LIME rule details are not available right now.
+                                                        </p>
+                                                    );
+                                                }
+
+                                                const maxImpact = getMaxImpact(rulesToShow);
+                                                return rulesToShow.map((rule, index) => {
+                                                    const isNegative = rule.displayEffect === 'hurts';
                                                     const impactPercent = (Math.abs(rule.impact) / maxImpact) * 100;
                                                     
                                                     return (
@@ -340,17 +457,17 @@ const BorrowerDashboard = () => {
                                                                 <div className="flex-grow">
                                                                     <div className="flex items-start justify-between mb-2">
                                                                         <div>
-                                                                            <p className={`font-mono text-sm font-semibold ${
+                                                                            <p className={`text-sm font-semibold ${
                                                                                 isNegative ? 'text-orange-900' : 'text-cyan-900'
                                                                             }`}>
-                                                                                {rule.rule}
+                                                                                {rule.readableRule}
                                                                             </p>
                                                                             <p className={`text-sm ${isNegative ? 'text-orange-800' : 'text-cyan-800'}`}>
-                                                                                {rule.summary}
+                                                                                {rule.readableSummary}
                                                                             </p>
                                                                         </div>
                                                                         <Badge className={isNegative ? 'bg-orange-600' : 'bg-cyan-600'}>
-                                                                            {rule.effect === 'helps' ? '↑ Positive' : '↓ Negative'}
+                                                                            {rule.displayEffect === 'helps' ? '↑ Positive' : '↓ Negative'}
                                                                         </Badge>
                                                                     </div>
                                                                     <div className="mt-3 space-y-2">
