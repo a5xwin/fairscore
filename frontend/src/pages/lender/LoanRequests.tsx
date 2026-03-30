@@ -26,6 +26,7 @@ const formatTenure = (yr: number, mon: number) => {
 
 const LoanRequests = () => {
     const { user } = useAuth();
+    const lenderId = user?.id;
     const [requests, setRequests] = useState<LoanRequestBorrower[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -41,9 +42,9 @@ const LoanRequests = () => {
 
     useEffect(() => {
         const fetchRequests = async () => {
-            if (!user?.id) return;
+            if (!lenderId) return;
             try {
-                const data = await authService.getLoanRequests(user.id);
+                const data = await authService.getLoanRequests(lenderId);
                 setRequests(data);
             } catch {
                 setError('Failed to load loan requests.');
@@ -52,7 +53,7 @@ const LoanRequests = () => {
             }
         };
         fetchRequests();
-    }, [user?.id]);
+    }, [lenderId]);
 
     useEffect(() => {
         const preloadExplanations = async () => {
@@ -63,6 +64,7 @@ const LoanRequests = () => {
                 setGeminiError('');
                 return;
             }
+            if (!lenderId) return;
 
             setExplanationLoading(true);
             setShapExplanation(null);
@@ -70,30 +72,25 @@ const LoanRequests = () => {
             setShapError('');
             setGeminiError('');
 
-            const [shapResult, geminiResult] = await Promise.allSettled([
-                authService.getShapExplanation(selected.userid),
-                authService.getGeminiAdvice(selected.userid),
+            const [shapResult] = await Promise.allSettled([
+                authService.getLenderReviewInsights(lenderId, selected.userid),
             ]);
 
             if (shapResult.status === 'fulfilled') {
-                setShapExplanation(shapResult.value);
+                setShapExplanation(shapResult.value.shap);
+                setGeminiAdvice(shapResult.value.advice);
             } else {
                 const e = shapResult.reason as { response?: { data?: { detail?: string } } };
-                setShapError(e?.response?.data?.detail || 'Could not load SHAP factors.');
-            }
-
-            if (geminiResult.status === 'fulfilled') {
-                setGeminiAdvice(geminiResult.value);
-            } else {
-                const e = geminiResult.reason as { response?: { data?: { detail?: string } } };
-                setGeminiError(e?.response?.data?.detail || 'Could not load AI recommendation.');
+                const detail = e?.response?.data?.detail || 'Could not load borrower review insights.';
+                setShapError(detail);
+                setGeminiError(detail);
             }
 
             setExplanationLoading(false);
         };
 
         preloadExplanations();
-    }, [selected?.userid]);
+    }, [selected?.userid, lenderId]);
 
     const handleApprove = async () => {
         if (!user?.id || !selected) return;
@@ -230,7 +227,7 @@ const LoanRequests = () => {
                                 </div>
 
                                 <div className="space-y-3">
-                                    <h5 className="text-sm font-medium">SHAP Key Factors</h5>
+                                    <h5 className="text-sm font-medium">Borrower Score Factors</h5>
                                     {explanationLoading && !shapExplanation ? (
                                         <div className="space-y-2">
                                             {[1, 2, 3].map((i) => (
@@ -263,7 +260,9 @@ const LoanRequests = () => {
                                                                 style={{ width: `${width}%` }}
                                                             />
                                                         </div>
-                                                        <p className="text-xs text-muted-foreground">{factor.summary}</p>
+                                                        <p className="text-xs text-muted-foreground">
+                                                            {`${factor.feature} ${positive ? 'supports' : 'reduces'} the borrower's credit score.`}
+                                                        </p>
                                                     </div>
                                                 );
                                             })}
@@ -296,7 +295,7 @@ const LoanRequests = () => {
                                             <p className="text-sm leading-relaxed whitespace-pre-wrap">{geminiAdvice.advice}</p>
                                             {geminiAdvice.improvementTips?.length > 0 && (
                                                 <div>
-                                                    <p className="text-xs font-medium text-muted-foreground mb-1">Improvement Tips</p>
+                                                    <p className="text-xs font-medium text-muted-foreground mb-1">Decision Tips</p>
                                                     <ul className="list-disc pl-5 space-y-1 text-xs text-muted-foreground">
                                                         {geminiAdvice.improvementTips.slice(0, 4).map((tip, idx) => (
                                                             <li key={idx}>{tip}</li>

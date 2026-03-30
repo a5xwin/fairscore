@@ -4,13 +4,12 @@ import { useAuth } from '@/context/AuthContext';
 import {
     authService,
     CreditInfo,
-    ShapExplanation,
-    LimeExplanation,
+    ScoreReasons,
     GeminiAdvice,
 } from '@/services/authService';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { ShieldCheck, TrendingUp, Wallet, AlertTriangle, CheckCircle, Info, Sparkles, Target, Lightbulb, DollarSign, Percent, TrendingDown, Clock, Users, ArrowRight, Zap } from 'lucide-react';
+import { ShieldCheck, TrendingUp, Wallet, AlertTriangle, CheckCircle, Info, Sparkles, ArrowRight, Zap } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
@@ -20,96 +19,138 @@ const riskConfig: Record<string, { color: string; icon: typeof ShieldCheck; labe
     high: { color: 'bg-red-100 text-red-800 border-red-200', icon: AlertTriangle, label: 'High Risk' },
 };
 
-const normalizeRuleText = (text: string) => text.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
-
-const extractFeatureFromRule = (rawRule: string) => {
-    const cleanedRule = normalizeRuleText(rawRule);
-    const match = cleanedRule.match(/^(.*?)(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$/);
-    if (!match) return cleanedRule.toLowerCase();
-    return normalizeRuleText(match[1]).toLowerCase();
+type AdviceBlock = {
+    title: string;
+    body: string;
+    action: string;
+    rationale: string;
 };
 
-const extractRuleOperator = (rawRule: string) => {
-    const cleanedRule = normalizeRuleText(rawRule);
-    const match = cleanedRule.match(/^(.*?)(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$/);
-    return match?.[2] ?? null;
+const cleanAdviceText = (text: string) => {
+    return String(text || '')
+        .replace(/\r/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/[ \t]+/g, ' ')
+        .trim();
 };
 
-const getDisplayLimeEffect = (rawRule: string, fallback: 'helps' | 'hurts') => {
-    const feature = extractFeatureFromRule(rawRule);
-    const operator = extractRuleOperator(rawRule);
-
-    if (!operator) return fallback;
-
-    const trend = operator === '<=' || operator === '<' ? 'lower' : operator === '>=' || operator === '>' ? 'higher' : 'neutral';
-    if (trend === 'neutral') return fallback;
-
-    const lowerIsBetterFeatures = [
-        'number of existing loans',
-        'existing loans',
-        'loan count',
-        'debt to income ratio',
-        'dti',
-        'utilization',
-        'late payment',
-        'overdue',
+const looksLikeActionSentence = (sentence: string) => {
+    const normalized = sentence.trim().toLowerCase();
+    const actionStarts = [
+        'focus',
+        'pay',
+        'avoid',
+        'maintain',
+        'consider',
+        'review',
+        'reduce',
+        'increase',
+        'build',
+        'keep',
+        'monitor',
+        'improve',
+        'establish',
+        'diversify',
+        'open',
+        'correct',
+        'set up',
+        'start',
     ];
-
-    const higherIsBetterFeatures = [
-        'credit history length',
-        'income',
-        'monthly income',
-        'savings',
-        'payment history',
-    ];
-
-    const lowerIsBetter = lowerIsBetterFeatures.some((token) => feature.includes(token));
-    const higherIsBetter = higherIsBetterFeatures.some((token) => feature.includes(token));
-
-    if (lowerIsBetter) return trend === 'lower' ? 'helps' : 'hurts';
-    if (higherIsBetter) return trend === 'higher' ? 'helps' : 'hurts';
-
-    return fallback;
+    return actionStarts.some((prefix) => normalized.startsWith(prefix));
 };
 
-const isUsefulLimeRule = (rule: { rule: string; impact: number }, readableRule: string) => {
-    const feature = extractFeatureFromRule(rule.rule);
-    const nonActionableFeatures = ['city', 'existing customer', 'customer id', 'user id', 'id'];
-    const hasNonActionableFeature = nonActionableFeatures.some((token) => feature.includes(token));
-    const hasVagueText = readableRule.toLowerCase().includes('around this level');
-    const hasMeaningfulImpact = Math.abs(rule.impact) >= 1;
+const chooseActionAndRationale = (body: string, fallbackTitle: string) => {
+    const sentenceParts = body
+        .split(/(?<=[.!?])\s+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
 
-    return !hasNonActionableFeature && !hasVagueText && hasMeaningfulImpact;
-};
-
-const toReadableLimeRule = (rawRule: string) => {
-    const cleanedRule = normalizeRuleText(rawRule);
-    const match = cleanedRule.match(/^(.*?)(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$/);
-
-    if (!match) return cleanedRule;
-
-    const [, rawFeature, operator, rawValue] = match;
-    const feature = normalizeRuleText(rawFeature);
-    const numericValue = Number(rawValue);
-    const hasModelScaledValue = Number.isFinite(numericValue) && (!Number.isInteger(numericValue) || numericValue < 0);
-
-    if (hasModelScaledValue) {
-        if (operator === '<=' || operator === '<') return `${feature} is on the lower side`;
-        if (operator === '>=' || operator === '>') return `${feature} is on the higher side`;
-        return `${feature} is around this level`;
+    if (!sentenceParts.length) {
+        return {
+            action: fallbackTitle,
+            rationale: 'This can strengthen your credit profile over time.',
+        };
     }
 
-    const value = Number.isFinite(numericValue) ? numericValue.toString() : rawValue;
+    const firstActionIndex = sentenceParts.findIndex((sentence) => looksLikeActionSentence(sentence));
+    const action = firstActionIndex >= 0 ? sentenceParts[firstActionIndex] : sentenceParts[0];
+    const rationaleParts = sentenceParts.filter((_, idx) => idx !== (firstActionIndex >= 0 ? firstActionIndex : 0));
+    const rationale = rationaleParts.join(' ').trim() || 'This directly improves your creditworthiness over time.';
 
-    if (operator === '<=') return `${feature} is ${value} or below`;
-    if (operator === '>=') return `${feature} is ${value} or above`;
-    if (operator === '<') return `${feature} is below ${value}`;
-    if (operator === '>') return `${feature} is above ${value}`;
-    return `${feature} is ${value}`;
+    return { action, rationale };
 };
 
-const toReadableLimeSummary = (ruleText: string, effect: 'helps' | 'hurts') => {
-    return `${ruleText} ${effect === 'helps' ? 'helps' : 'hurts'} your credit score.`;
+const splitAdviceBlocks = (rawText: string): AdviceBlock[] => {
+    const cleaned = cleanAdviceText(rawText);
+    if (!cleaned) return [];
+
+    const numberedChunks = cleaned
+        .split(/(?:^|\n)\s*\d+\.\s+/)
+        .map((chunk) => chunk.trim())
+        .filter(Boolean);
+
+    const chunks = numberedChunks.length > 1
+        ? numberedChunks
+        : cleaned
+            .split(/\n{2,}/)
+            .map((chunk) => chunk.trim())
+            .filter(Boolean);
+
+    const blocks = chunks.map((chunk, index) => {
+        const line = chunk.replace(/\n+/g, ' ').trim();
+        const colonIndex = line.indexOf(':');
+
+        let title = `Action ${index + 1}`;
+        let body = line;
+
+        if (colonIndex > 0 && colonIndex < 90) {
+            title = line.slice(0, colonIndex).trim();
+            body = line.slice(colonIndex + 1).trim();
+        } else {
+            const sentenceParts = line.split(/(?<=[.!?])\s+/).filter(Boolean);
+            if (sentenceParts.length > 1) {
+                title = sentenceParts[0].replace(/[.!?]+$/, '').trim();
+                body = sentenceParts.slice(1).join(' ').trim();
+            }
+        }
+
+        const titleLower = title.toLowerCase();
+        const bodyLower = body.toLowerCase();
+        if (bodyLower === titleLower || bodyLower.startsWith(`${titleLower}.`) || bodyLower.startsWith(titleLower)) {
+            body = '';
+        }
+
+        const { action, rationale } = chooseActionAndRationale(body, title);
+
+        // If title is generic (Action 1), derive a better heading from the action sentence.
+        if (/^action\s+\d+$/i.test(title)) {
+            const fallbackTitle = action
+                .split(/[,.;:]/)
+                .map((part) => part.trim())
+                .find(Boolean);
+            if (fallbackTitle) {
+                title = fallbackTitle;
+            }
+        }
+
+        return {
+            title,
+            body,
+            action,
+            rationale,
+        };
+    });
+
+    const filteredBlocks = blocks.filter((block) => {
+        const combined = `${block.title} ${block.body}`.toLowerCase();
+        return !(
+            combined.includes('here are') &&
+            combined.includes('practical actions')
+        );
+    });
+
+    return filteredBlocks.length ? filteredBlocks : blocks;
 };
 
 const BorrowerDashboard = () => {
@@ -117,27 +158,10 @@ const BorrowerDashboard = () => {
     const [creditInfo, setCreditInfo] = useState<CreditInfo | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [shapExplanation, setShapExplanation] = useState<ShapExplanation | null>(null);
-    const [limeExplanation, setLimeExplanation] = useState<LimeExplanation | null>(null);
+    const [scoreReasons, setScoreReasons] = useState<ScoreReasons | null>(null);
     const [geminiAdvice, setGeminiAdvice] = useState<GeminiAdvice | null>(null);
     const [explanationLoading, setExplanationLoading] = useState(true);
     const [explanationErrors, setExplanationErrors] = useState<string[]>([]);
-
-    // Helper to get icon and explanation for factors
-    const getFactorIcon = (feature: string) => {
-        const lower = feature.toLowerCase();
-        if (lower.includes('loan')) return DollarSign;
-        if (lower.includes('income')) return Wallet;
-        if (lower.includes('payment') || lower.includes('time')) return Clock;
-        if (lower.includes('age') || lower.includes('tenure')) return Users;
-        if (lower.includes('ratio')) return Percent;
-        return TrendingUp;
-    };
-
-    // Calculate max impact for normalization
-    const getMaxImpact = (factors: any[]) => {
-        return Math.max(1, ...factors.map(f => Math.abs(f.impact)));
-    };
 
     useEffect(() => {
         const fetchCreditInfo = async () => {
@@ -156,30 +180,23 @@ const BorrowerDashboard = () => {
             if (!user?.id) return;
             setExplanationLoading(true);
 
-            const [shapResult, limeResult, adviceResult] = await Promise.allSettled([
-                authService.getShapExplanation(user.id),
-                authService.getLimeExplanation(user.id),
-                authService.getGeminiAdvice(user.id),
+            const [reasonsResult, adviceResult] = await Promise.allSettled([
+                authService.getScoreReasons(user.id),
+                authService.getScoreAdvice(user.id),
             ]);
 
             const errors: string[] = [];
 
-            if (shapResult.status === 'fulfilled') {
-                setShapExplanation(shapResult.value);
+            if (reasonsResult.status === 'fulfilled') {
+                setScoreReasons(reasonsResult.value);
             } else {
-                errors.push('SHAP explanation unavailable right now.');
-            }
-
-            if (limeResult.status === 'fulfilled') {
-                setLimeExplanation(limeResult.value);
-            } else {
-                errors.push('LIME explanation unavailable right now.');
+                errors.push('Score reasons are unavailable right now.');
             }
 
             if (adviceResult.status === 'fulfilled') {
                 setGeminiAdvice(adviceResult.value);
             } else {
-                errors.push('Advice generation unavailable right now.');
+                errors.push('Improvement advice is unavailable right now.');
             }
 
             setExplanationErrors(errors);
@@ -303,7 +320,7 @@ const BorrowerDashboard = () => {
             <Card>
                 <CardHeader className="flex flex-row items-center gap-2">
                     <Sparkles className="h-5 w-5 text-primary" />
-                    <CardTitle>Score Explanations And Improvement Advice</CardTitle>
+                    <CardTitle>Score Reasons And Improvement Advice</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {explanationLoading ? (
@@ -323,180 +340,56 @@ const BorrowerDashboard = () => {
                                 </Alert>
                             )}
 
-                            <Tabs defaultValue="shap" className="w-full">
-                                <TabsList className="grid w-full grid-cols-3">
-                                    <TabsTrigger value="shap">SHAP Factors</TabsTrigger>
-                                    <TabsTrigger value="lime">LIME Rules</TabsTrigger>
+                            <Tabs defaultValue="reasons" className="w-full">
+                                <TabsList className="grid w-full grid-cols-2">
+                                    <TabsTrigger value="reasons">Reasons for Score</TabsTrigger>
                                     <TabsTrigger value="advice">Advice</TabsTrigger>
                                 </TabsList>
 
-                                <TabsContent value="shap" className="space-y-3">
-                                    {shapExplanation?.topFactors?.length ? (
+                                <TabsContent value="reasons" className="space-y-3">
+                                    {scoreReasons?.combinedReasons?.length ? (
                                         <>
-                                            <div className="text-xs text-muted-foreground bg-blue-50 border border-blue-200 rounded-lg p-3 mb-2">
-                                                <p><strong>What you're seeing:</strong> These are key factors from your financial profile that most impact your credit score.</p>
+                                            <div className="rounded-lg border border-indigo-200 bg-indigo-50/70 p-4 text-sm text-indigo-900 space-y-2">
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <p className="font-semibold">Combined score explanation</p>
+                                                    {scoreReasons?.source ? (
+                                                        <span className="text-[11px] uppercase tracking-wide px-2 py-1 rounded-full bg-white/80 border border-indigo-200 text-indigo-700">
+                                                            {scoreReasons.source === 'gemini' ? 'Gemini generated' : 'Fallback generated'}
+                                                        </span>
+                                                    ) : null}
+                                                </div>
+                                                <p>{scoreReasons.overview || 'These reasons combine broad model influence and your profile-specific patterns.'}</p>
                                             </div>
-                                            {(() => {
-                                                const maxImpact = getMaxImpact(shapExplanation.topFactors);
-                                                return shapExplanation.topFactors.map((factor, index) => {
-                                                    const IconComponent = getFactorIcon(factor.feature);
-                                                    const impactPercent = (Math.abs(factor.impact) / maxImpact) * 100;
-                                                    const isNegative = factor.direction === 'hurts';
-                                                    
-                                                    return (
-                                                        <div
-                                                            key={`${factor.feature}-${index}`}
-                                                            className={`rounded-lg border p-4 transition-all hover:shadow-md ${
-                                                                isNegative 
-                                                                    ? 'border-red-200 bg-red-50' 
-                                                                    : 'border-green-200 bg-green-50'
-                                                            }`}
-                                                        >
-                                                            <div className="flex gap-4">
-                                                                <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
-                                                                    isNegative ? 'bg-red-200' : 'bg-green-200'
-                                                                }`}>
-                                                                    <IconComponent className={`w-5 h-5 ${isNegative ? 'text-red-700' : 'text-green-700'}`} />
-                                                                </div>
-                                                                <div className="flex-grow">
-                                                                    <div className="flex items-start justify-between mb-2">
-                                                                        <h4 className={`font-semibold ${isNegative ? 'text-red-900' : 'text-green-900'}`}>
-                                                                            {factor.feature}
-                                                                        </h4>
-                                                                        <Badge className={isNegative ? 'bg-red-600' : 'bg-green-600'}>
-                                                                            {factor.direction === 'helps' ? '↑ Helps' : '↓ Hurts'}
-                                                                        </Badge>
-                                                                    </div>
-                                                                    <p className={`text-sm mb-3 ${isNegative ? 'text-red-800' : 'text-green-800'}`}>
-                                                                        {factor.summary}
-                                                                    </p>
-                                                                    <div className="space-y-2">
-                                                                        <div className="flex justify-between items-center text-xs">
-                                                                            <span className={`font-medium ${isNegative ? 'text-red-700' : 'text-green-700'}`}>
-                                                                                Impact strength
-                                                                            </span>
-                                                                            <span className={`font-bold text-sm ${isNegative ? 'text-red-700' : 'text-green-700'}`}>
-                                                                                {Math.abs(factor.impact).toFixed(1)} pts
-                                                                            </span>
-                                                                        </div>
-                                                                        <div className={`w-full h-2 rounded-full overflow-hidden ${isNegative ? 'bg-red-200' : 'bg-green-200'}`}>
-                                                                            <div 
-                                                                                className={`h-full ${isNegative ? 'bg-red-600' : 'bg-green-600'}`}
-                                                                                style={{ width: `${impactPercent}%` }}
-                                                                            />
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
+
+                                            {scoreReasons.combinedReasons.map((reason, index) => {
+                                                const isNegative = reason.direction === 'hurts';
+                                                return (
+                                                    <div
+                                                        key={`${reason.feature}-${index}`}
+                                                        className={`rounded-lg border p-4 ${
+                                                            isNegative ? 'border-red-200 bg-red-50/80' : 'border-emerald-200 bg-emerald-50/80'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-start justify-between gap-4 mb-2">
+                                                            <h4 className={`font-semibold ${isNegative ? 'text-red-900' : 'text-emerald-900'}`}>
+                                                                {reason.feature}
+                                                            </h4>
+                                                            <Badge className={isNegative ? 'bg-red-600' : 'bg-emerald-600'}>
+                                                                {isNegative ? 'Hurts score' : 'Helps score'}
+                                                            </Badge>
                                                         </div>
-                                                    );
-                                                });
-                                            })()}
-                                        </>
-                                    ) : (
-                                        <p className="text-sm text-muted-foreground">SHAP factor details are not available right now.</p>
-                                    )}
-                                </TabsContent>
-
-                                <TabsContent value="lime" className="space-y-3">
-                                    {limeExplanation?.rules?.length ? (
-                                        <>
-                                            <div className="text-xs text-muted-foreground bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
-                                                <p><strong>What you're seeing:</strong> These are the most useful and actionable conditions from your profile that explain your score.</p>
-                                            </div>
-                                            {(() => {
-                                                const preparedRules = limeExplanation.rules
-                                                    .map((rule) => {
-                                                        const displayEffect = rule.effect;
-                                                        const readableRule = toReadableLimeRule(rule.rule);
-                                                        const backendSummary = (rule.summary || '').trim();
-                                                        const readableSummary = backendSummary || toReadableLimeSummary(readableRule, displayEffect);
-                                                        return {
-                                                            ...rule,
-                                                            displayEffect,
-                                                            readableRule,
-                                                            readableSummary,
-                                                        };
-                                                    });
-
-                                                const usefulRules = preparedRules.filter((rule) => isUsefulLimeRule(rule, rule.readableRule));
-                                                const rulesToShow = usefulRules.length ? usefulRules : preparedRules;
-
-                                                if (!rulesToShow.length) {
-                                                    return (
-                                                        <p className="text-sm text-muted-foreground">
-                                                            Useful LIME rule details are not available right now.
+                                                        <p className={`text-sm ${isNegative ? 'text-red-800' : 'text-emerald-800'}`}>
+                                                            {reason.explanation}
                                                         </p>
-                                                    );
-                                                }
-
-                                                const maxImpact = getMaxImpact(rulesToShow);
-                                                return rulesToShow.map((rule, index) => {
-                                                    const isNegative = rule.displayEffect === 'hurts';
-                                                    const impactPercent = (Math.abs(rule.impact) / maxImpact) * 100;
-                                                    
-                                                    return (
-                                                        <div
-                                                            key={`${rule.rule}-${index}`}
-                                                            className={`rounded-lg border p-4 transition-all hover:shadow-md ${
-                                                                isNegative 
-                                                                    ? 'border-orange-200 bg-orange-50' 
-                                                                    : 'border-cyan-200 bg-cyan-50'
-                                                            }`}
-                                                        >
-                                                            <div className="flex gap-4">
-                                                                <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
-                                                                    isNegative ? 'bg-orange-200' : 'bg-cyan-200'
-                                                                }`}>
-                                                                    {isNegative ? (
-                                                                        <TrendingDown className="w-5 h-5 text-orange-700" />
-                                                                    ) : (
-                                                                        <TrendingUp className="w-5 h-5 text-cyan-700" />
-                                                                    )}
-                                                                </div>
-                                                                <div className="flex-grow">
-                                                                    <div className="flex items-start justify-between mb-2">
-                                                                        <div>
-                                                                            <p className={`text-sm font-semibold ${
-                                                                                isNegative ? 'text-orange-900' : 'text-cyan-900'
-                                                                            }`}>
-                                                                                {rule.readableRule}
-                                                                            </p>
-                                                                            <p className={`text-sm ${isNegative ? 'text-orange-800' : 'text-cyan-800'}`}>
-                                                                                {rule.readableSummary}
-                                                                            </p>
-                                                                        </div>
-                                                                        <Badge className={isNegative ? 'bg-orange-600' : 'bg-cyan-600'}>
-                                                                            {rule.displayEffect === 'helps' ? '↑ Positive' : '↓ Negative'}
-                                                                        </Badge>
-                                                                    </div>
-                                                                    <div className="mt-3 space-y-2">
-                                                                        <div className="flex justify-between items-center text-xs">
-                                                                            <span className={`font-medium ${isNegative ? 'text-orange-700' : 'text-cyan-700'}`}>
-                                                                                Effect on score
-                                                                            </span>
-                                                                            <span className={`font-bold text-sm ${isNegative ? 'text-orange-700' : 'text-cyan-700'}`}>
-                                                                                {rule.impact >= 0 ? '+' : ''}{rule.impact.toFixed(1)} pts
-                                                                            </span>
-                                                                        </div>
-                                                                        {rule.impact !== 0 && (
-                                                                            <div className={`w-full h-2 rounded-full overflow-hidden ${isNegative ? 'bg-orange-200' : 'bg-cyan-200'}`}>
-                                                                                <div 
-                                                                                    className={`h-full ${isNegative ? 'bg-orange-600' : 'bg-cyan-600'}`}
-                                                                                    style={{ width: `${impactPercent}%` }}
-                                                                                />
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                });
-                                            })()}
+                                                        <p className={`mt-2 text-xs font-medium ${isNegative ? 'text-red-700' : 'text-emerald-700'}`}>
+                                                            Average impact: {Math.abs(reason.impact).toFixed(2)}
+                                                        </p>
+                                                    </div>
+                                                );
+                                            })}
                                         </>
                                     ) : (
-                                        <p className="text-sm text-muted-foreground">LIME rule details are not available right now.</p>
+                                        <p className="text-sm text-muted-foreground">Combined reason details are not available right now.</p>
                                     )}
                                 </TabsContent>
 
@@ -531,57 +424,48 @@ const BorrowerDashboard = () => {
                                                 </div>
 
                                                 <div className="px-5 py-5 space-y-4">
-                                                    {/* Parse and display advice as paragraphs */}
                                                     {(() => {
-                                                        const adviceText = geminiAdvice.advice || '';
-                                                        // Split by numbered patterns and normalize
-                                                        const sections = adviceText
-                                                            .split(/\d+\.\s+/)
-                                                            .filter(s => s.trim().length > 0)
-                                                            .map(s => s.trim());
-
-                                                        if (sections.length > 1) {
-                                                            // Has multiple numbered sections
+                                                        const blocks = splitAdviceBlocks(geminiAdvice.advice || '');
+                                                        if (!blocks.length) {
                                                             return (
-                                                                <div className="space-y-4">
-                                                                    {sections.map((section, idx) => {
-                                                                        // Extract title (text until first colon or first sentence)
-                                                                        const titleMatch = section.match(/^([^:\.]+)[:\.]/);
-                                                                        const title = titleMatch ? titleMatch[1].replace(/\*{1,2}/g, '').trim() : `Point ${idx + 1}`;
-                                                                        const content = section.replace(/^\*{1,2}[^:]+\*{0,2}:\s*/, '').trim();
+                                                                <p className="text-sm text-slate-700 leading-relaxed">
+                                                                    {cleanAdviceText(geminiAdvice.advice || 'No advice available right now.')}
+                                                                </p>
+                                                            );
+                                                        }
 
-                                                                        return (
-                                                                            <div key={`section-${idx}`} className="rounded-lg border border-blue-100 bg-blue-50/30 p-4">
-                                                                                <div className="flex gap-3">
-                                                                                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold">
-                                                                                        {idx + 1}
+                                                        return (
+                                                            <div className="space-y-3">
+                                                                {blocks.map((block, idx) => (
+                                                                    <div key={`advice-block-${idx}`} className="rounded-lg border border-blue-100 bg-blue-50/30 p-4">
+                                                                        <div className="flex gap-3">
+                                                                            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold">
+                                                                                {idx + 1}
+                                                                            </div>
+                                                                            <div className="flex-grow">
+                                                                                <h4 className="font-semibold text-sm text-blue-900 mb-1">
+                                                                                    {block.title}
+                                                                                </h4>
+                                                                                <div className="space-y-2 text-sm text-slate-700 leading-relaxed">
+                                                                                    <div>
+                                                                                        <p className="text-[11px] uppercase tracking-wide text-blue-700 font-semibold">What to do</p>
+                                                                                        <p>{block.action}</p>
                                                                                     </div>
-                                                                                    <div className="flex-grow">
-                                                                                        <h4 className="font-semibold text-sm text-blue-900 mb-2">
-                                                                                            {title}
-                                                                                        </h4>
-                                                                                        <p className="text-sm text-slate-700 leading-relaxed">
-                                                                                            {content.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1')}
-                                                                                        </p>
-                                                                                    </div>
+                                                                                    {block.rationale ? (
+                                                                                        <div>
+                                                                                            <p className="text-[11px] uppercase tracking-wide text-blue-700 font-semibold">Why it helps</p>
+                                                                                            <p>{block.rationale}</p>
+                                                                                        </div>
+                                                                                    ) : null}
                                                                                 </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
                                                             </div>
                                                         );
-                                                    })}
+                                                    })()}
                                                 </div>
-                                            );
-                                        } else {
-                                            // Single paragraph - display with better formatting
-                                            return (
-                                                <div className="text-sm text-slate-700 leading-relaxed space-y-3">
-                                                    {adviceText.split('\n\n').map((para, idx) => (
-                                                        <p key={`para-${idx}`}>{para.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1')}</p>
-                                                    ))}
-                                                </div>
-                                            );
-                                        }
-                                    })()}
-                                </div>
                             </div>
 
                             {/* Improvement tips section */}

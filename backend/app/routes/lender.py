@@ -12,7 +12,8 @@ from app.services.lender_services import (
     get_loan_requests,
     approve_borrower,
     skip_borrower,
-    get_approved_borrowers
+    get_approved_borrowers,
+    get_borrower_review_insights,
 )
 
 router = APIRouter(prefix="/lender", tags=["Lender"])
@@ -98,4 +99,15 @@ def approved_borrowers(lenderId: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch approved borrowers"
+        )
+
+
+@router.get("/review-insights")
+def review_insights(lenderId: str, borrowerId: str):
+    try:
+        return get_borrower_review_insights(lenderId, borrowerId)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch borrower review insights"
         )

@@ -1,11 +1,147 @@
 from app.db.supabase import supabase
 from datetime import date
+import json
+import logging
+import os
+import re
+
+from app.services.borrower_services import get_shap_explanation, get_score_reasons
+
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_json_object(text: str):
+    if not isinstance(text, str):
+        return {}
+
+    cleaned = text.strip()
+    if not cleaned:
+        return {}
+
+    if cleaned.startswith("```"):
+        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return {}
+
+    try:
+        parsed = json.loads(cleaned[start:end + 1])
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _fallback_lender_review_advice(borrower_name: str, score: float, risk: str, reasons_payload):
+    top_hurts = [
+        reason.get("feature")
+        for reason in (reasons_payload.get("combinedReasons") or [])
+        if reason.get("direction") == "hurts"
+    ][:3]
+
+    decision = "Proceed with caution"
+    if risk == "low" and score >= 700:
+        decision = "Suitable for approval"
+    elif risk == "high" or score < 600:
+        decision = "High caution; consider tighter terms"
+
+    reasons_text = ", ".join(top_hurts) if top_hurts else "overall profile volatility"
+    advice = (
+        f"Borrower {borrower_name} is assessed as {risk.upper()} risk with score {int(score)}. "
+        f"Primary concerns: {reasons_text}. Recommendation: {decision}."
+    )
+
+    tips = [
+        "If approving, cap the loan amount within your lender range and affordability checks.",
+        "Apply risk-based pricing or stronger collateral/guarantor terms for high-risk profiles.",
+        "Request latest income proof and repayment records before final underwriting.",
+    ]
+
+    return {
+        "prediction": float(score),
+        "advice": advice,
+        "source": "fallback",
+        "improvementTips": tips,
+    }
+
+
+def _normalize_currency_to_inr(text: str):
+    if not isinstance(text, str):
+        return ""
+
+    normalized = text
+    # Convert patterns like $300,000 -> ₹300,000
+    normalized = re.sub(r"\$\s*([\d,]+(?:\.\d+)?)", r"₹\1", normalized)
+    # Convert USD words to INR/Rupees wording.
+    normalized = re.sub(r"\bUSD\b", "INR", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdollars?\b", "rupees", normalized, flags=re.IGNORECASE)
+    return normalized
+
+
+def _generate_lender_review_advice_with_gemini(lender_context, borrower_context, reasons_payload, api_key: str):
+    if not api_key:
+        return None
+
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+
+        prompt = (
+            "You are a lending risk assistant. Generate a concise review note for a lender evaluating a borrower loan request. "
+            "Use borrower risk context and reasons, then provide practical decision guidance. "
+            "Use Indian currency style only (INR, rupees, ₹). Never use USD or $. "
+            "The output should be lender-oriented underwriting guidance, not borrower coaching. "
+            "Return ONLY a JSON object with keys: advice (string), improvementTips (array of 3 short strings). "
+            "No markdown, no extra keys.\n\n"
+            f"Lender context: {lender_context}\n"
+            f"Borrower context: {borrower_context}\n"
+            f"Score reasons: {reasons_payload}"
+        )
+
+        response = model.generate_content(prompt)
+        response_text = response.text if hasattr(response, "text") else str(response)
+        parsed = _extract_json_object(response_text)
+        if not parsed:
+            return None
+
+        advice = _normalize_currency_to_inr(str(parsed.get("advice") or "").strip())
+        tips = parsed.get("improvementTips") or []
+        if not advice:
+            return None
+
+        normalized_tips = [_normalize_currency_to_inr(str(t).strip()) for t in tips if str(t).strip()][:4]
+        return {
+            "advice": advice,
+            "improvementTips": normalized_tips,
+        }
+    except Exception as exc:
+        logger.warning("Gemini lender review generation failed: %s", exc)
+        return None
 
 
 # -----------------------------
 # POST /lender/details
 # -----------------------------
+def validate_lending_limits(capacity: float, loan_amount_from: float, loan_amount_to: float, interest: float) -> None:
+    if capacity <= 0:
+        raise ValueError("Lending capacity must be greater than 0.")
+    if loan_amount_from <= 0 or loan_amount_to <= 0:
+        raise ValueError("Loan amount range must be greater than 0.")
+    if loan_amount_from >= loan_amount_to:
+        raise ValueError('Loan range "From" must be less than "To".')
+    if loan_amount_to > capacity:
+        raise ValueError("Maximum loan amount cannot exceed lending capacity.")
+    if interest <= 0 or interest > 100:
+        raise ValueError("Interest rate must be greater than 0 and at most 100.")
+
+
 def create_lender_details(data):
+    validate_lending_limits(data.capacity, data.loanAmountFrom, data.loanAmountTo, data.interest)
+
     supabase.table("lender").insert({
         "id": data.lenderId,
         "type": data.type,
@@ -46,6 +182,8 @@ def get_lender_details(lender_id: str):
 # PUT /lender/details
 # -----------------------------
 def update_lender_details(data):
+    validate_lending_limits(data.capacity, data.loanAmountFrom, data.loanAmountTo, data.interest)
+
     supabase.table("lender") \
         .update({
             "capacity": data.capacity,
@@ -230,3 +368,61 @@ def get_approved_borrowers(lender_id: str):
         })
 
     return result
+
+
+def get_borrower_review_insights(lender_id: str, borrower_id: str):
+    # Lender snapshot
+    lender_row = supabase.table("lender") \
+        .select("id, type, capacity, loan_amount_from, loan_amount_to, interest") \
+        .eq("id", lender_id).limit(1).execute()
+    lender_context = (lender_row.data or [{}])[0]
+
+    # Borrower snapshot for review context
+    user_row = supabase.table("users").select("name").eq("id", borrower_id).limit(1).execute()
+    borrower_name = ((user_row.data or [{}])[0]).get("name", "Borrower")
+
+    credit_row = supabase.table("borrower_credit_info") \
+        .select("credit_score, risk") \
+        .eq("id", borrower_id).limit(1).execute()
+    credit_context = (credit_row.data or [{}])[0]
+
+    loan_row = supabase.table("borrower_loan_details") \
+        .select("loan_amount, loan_tenure, purpose") \
+        .eq("borrower_id", borrower_id).limit(1).execute()
+    loan_context = (loan_row.data or [{}])[0]
+
+    shap = get_shap_explanation(borrower_id)
+    reasons = get_score_reasons(borrower_id)
+
+    score = float(credit_context.get("credit_score") or reasons.get("prediction") or 0.0)
+    risk = str(credit_context.get("risk") or "unknown")
+
+    borrower_context = {
+        "name": borrower_name,
+        "score": score,
+        "risk": risk,
+        "loanRequest": loan_context,
+    }
+
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    gemini_payload = _generate_lender_review_advice_with_gemini(
+        lender_context=lender_context,
+        borrower_context=borrower_context,
+        reasons_payload=reasons,
+        api_key=api_key,
+    )
+
+    if gemini_payload:
+        advice = {
+            "prediction": score,
+            "advice": gemini_payload["advice"],
+            "source": "gemini",
+            "improvementTips": gemini_payload["improvementTips"],
+        }
+    else:
+        advice = _fallback_lender_review_advice(borrower_name, score, risk, reasons)
+
+    return {
+        "shap": shap,
+        "advice": advice,
+    }

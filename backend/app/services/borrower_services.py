@@ -4,11 +4,16 @@ import sys
 import os
 import logging
 import json
+import hashlib
 import re
 from uuid import UUID
 
 
 logger = logging.getLogger(__name__)
+
+
+_INSIGHTS_CACHE_TABLE = "borrower_score_insights_cache"
+_INSIGHTS_CACHE_MEMORY = {}
 
 
 class ExplanationServiceError(Exception):
@@ -46,6 +51,15 @@ def calculate_ltv(loan_amount: float, asset_value: float) -> float:
     if asset_value <= 0:
         return 0
     return (loan_amount / asset_value) * 100
+
+
+def validate_loan_and_asset_values(loan_amount: float, asset_value: float) -> None:
+    if asset_value <= 0:
+        raise ValueError("Asset value must be greater than 0.")
+    if loan_amount <= 0:
+        raise ValueError("Loan amount must be greater than 0.")
+    if loan_amount > asset_value:
+        raise ValueError("Loan amount cannot exceed asset value.")
 
 
 # -----------------------------
@@ -152,6 +166,57 @@ def _to_float(value, default=0.0):
         return default
 
 
+def _compute_prediction_fingerprint(prediction_data):
+    normalized = json.dumps(prediction_data, sort_keys=True, default=str)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _read_insights_cache(user_id: str):
+    memory_row = _INSIGHTS_CACHE_MEMORY.get(user_id)
+
+    try:
+        res = supabase.table(_INSIGHTS_CACHE_TABLE) \
+            .select("user_id, profile_fingerprint, reasons_payload, advice_payload") \
+            .eq("user_id", user_id) \
+            .limit(1) \
+            .execute()
+        records = res.data or []
+        if records:
+            record = records[0]
+            _INSIGHTS_CACHE_MEMORY[user_id] = record
+            return record
+    except Exception as exc:
+        logger.debug("Insights cache table unavailable; using in-memory cache: %s", exc)
+
+    return memory_row
+
+
+def _write_insights_cache(user_id: str, fingerprint: str, reasons_payload=None, advice_payload=None):
+    existing = _read_insights_cache(user_id) or {}
+    row = {
+        "user_id": user_id,
+        "profile_fingerprint": fingerprint,
+        "reasons_payload": reasons_payload if reasons_payload is not None else existing.get("reasons_payload"),
+        "advice_payload": advice_payload if advice_payload is not None else existing.get("advice_payload"),
+    }
+
+    _INSIGHTS_CACHE_MEMORY[user_id] = row
+
+    try:
+        supabase.table(_INSIGHTS_CACHE_TABLE).upsert(row, on_conflict="user_id").execute()
+    except Exception as exc:
+        logger.debug("Failed to persist insights cache row in Supabase: %s", exc)
+
+
+def _invalidate_insights_cache(user_id: str):
+    _INSIGHTS_CACHE_MEMORY.pop(user_id, None)
+
+    try:
+        supabase.table(_INSIGHTS_CACHE_TABLE).delete().eq("user_id", user_id).execute()
+    except Exception as exc:
+        logger.debug("Failed to invalidate Supabase insights cache row: %s", exc)
+
+
 def _extract_table_records(table):
     if table is None:
         return []
@@ -196,6 +261,31 @@ def _extract_json_array(text: str):
         return parsed if isinstance(parsed, list) else []
     except Exception:
         return []
+
+
+def _extract_json_object(text: str):
+    if not isinstance(text, str):
+        return {}
+
+    cleaned = text.strip()
+    if not cleaned:
+        return {}
+
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return {}
+
+    json_str = cleaned[start:end + 1]
+    try:
+        parsed = json.loads(json_str)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
 
 
 def _fallback_humanize_lime_rule(rule_text: str):
@@ -311,6 +401,246 @@ def _ensure_non_empty_lime_rules(filtered_rules, raw_rules):
             "useful": True,
         })
     return fallback
+
+
+def _normalize_feature_key(feature_name: str):
+    return str(feature_name or "").replace("_", " ").strip().lower()
+
+
+def _canonical_reason_key(feature_name: str):
+    normalized = _normalize_feature_key(feature_name)
+    if not normalized:
+        return normalized
+
+    alias_map = {
+        "having no existing loans": "existing loans",
+        "no existing loans": "existing loans",
+        "number of existing loans": "existing loans",
+        "loan no": "existing loans",
+        "loan count": "existing loans",
+        "credit history length": "credit history",
+        "credit history": "credit history",
+        "monthly income": "income",
+    }
+
+    return alias_map.get(normalized, normalized)
+
+
+def _match_reason_feature_key(lime_feature: str, shap_features_by_key):
+    normalized_lime = _canonical_reason_key(lime_feature)
+    if not normalized_lime:
+        return None
+
+    if normalized_lime in shap_features_by_key:
+        return normalized_lime
+
+    for shap_key in shap_features_by_key.keys():
+        if normalized_lime in shap_key or shap_key in normalized_lime:
+            return shap_key
+
+    return None
+
+
+def _build_combined_score_reasons(shap_factors, lime_rules):
+    shap_factors = shap_factors or []
+    lime_rules = lime_rules or []
+
+    reasons_by_key = {}
+
+    for factor in shap_factors:
+        feature_name = str(factor.get("feature", "")).strip()
+        if not feature_name:
+            continue
+
+        key = _canonical_reason_key(feature_name)
+        impact = abs(_to_float(factor.get("impact"), 0.0))
+
+        reasons_by_key[key] = {
+            "feature": feature_name,
+            "direction": factor.get("direction", "hurts"),
+            "shapImpact": impact,
+            "ruleImpact": 0.0,
+            "summary": str(factor.get("summary") or "").strip(),
+            "supportingRules": [],
+            "helpsWeight": impact if factor.get("direction", "hurts") == "helps" else 0.0,
+            "hurtsWeight": impact if factor.get("direction", "hurts") == "hurts" else 0.0,
+        }
+
+    for rule in lime_rules:
+        rule_text = str(rule.get("rule") or "").strip()
+        if not rule_text:
+            continue
+
+        lime_feature, _ = _extract_rule_feature_and_operator(rule_text)
+        matched_key = _match_reason_feature_key(lime_feature, reasons_by_key)
+
+        if matched_key is None:
+            matched_key = _canonical_reason_key(lime_feature)
+            if matched_key not in reasons_by_key:
+                reasons_by_key[matched_key] = {
+                    "feature": _format_feature_label(lime_feature.title()),
+                    "direction": rule.get("effect", "hurts"),
+                    "shapImpact": 0.0,
+                    "ruleImpact": 0.0,
+                    "summary": "",
+                    "supportingRules": [],
+                    "helpsWeight": 0.0,
+                    "hurtsWeight": 0.0,
+                }
+
+        impact = abs(_to_float(rule.get("impact"), 0.0))
+        reasons_by_key[matched_key]["ruleImpact"] += impact
+        if rule.get("effect", "hurts") == "helps":
+            reasons_by_key[matched_key]["helpsWeight"] += impact
+        else:
+            reasons_by_key[matched_key]["hurtsWeight"] += impact
+        reasons_by_key[matched_key]["supportingRules"].append({
+            "rule": rule_text,
+            "effect": rule.get("effect", "hurts"),
+            "impact": impact,
+            "summary": str(rule.get("summary") or "").strip(),
+        })
+
+    combined_reasons = []
+    for item in reasons_by_key.values():
+        direction = "helps" if item["helpsWeight"] >= item["hurtsWeight"] else "hurts"
+        component_impacts = []
+        if item["shapImpact"] > 0:
+            component_impacts.append(item["shapImpact"])
+        component_impacts.extend([
+            abs(_to_float(rule.get("impact"), 0.0))
+            for rule in item["supportingRules"]
+            if abs(_to_float(rule.get("impact"), 0.0)) > 0
+        ])
+        total_impact = sum(component_impacts)
+        average_impact = round(total_impact / len(component_impacts), 4) if component_impacts else 0.0
+        rule_preview = [r.get("rule", "") for r in item["supportingRules"][:2] if r.get("rule")]
+
+        if item["summary"] and rule_preview:
+            explanation = (
+                f"{item['summary']} Supported by profile patterns such as: "
+                f"{'; '.join(rule_preview)}."
+            )
+        elif item["summary"]:
+            explanation = item["summary"]
+        elif rule_preview:
+            explanation = f"Key profile patterns include: {'; '.join(rule_preview)}."
+        else:
+            explanation = "This factor materially influences your score."
+
+        combined_reasons.append({
+            "feature": item["feature"],
+            "direction": direction,
+            "impact": average_impact,
+            "totalImpact": round(total_impact, 4),
+            "signalCount": len(component_impacts),
+            "explanation": explanation,
+            "shapSummary": item["summary"],
+            "supportingRules": item["supportingRules"],
+        })
+
+    combined_reasons.sort(key=lambda reason: abs(_to_float(reason.get("impact"), 0.0)), reverse=True)
+
+    top_negative = [r.get("feature") for r in combined_reasons if r.get("direction") == "hurts"][:3]
+    top_positive = [r.get("feature") for r in combined_reasons if r.get("direction") == "helps"][:2]
+
+    overview = (
+        "Top reasons behind your score are based on both overall feature influence and profile-specific rules. "
+        f"Main downward pressure: {', '.join(top_negative) if top_negative else 'none identified'}. "
+        f"Main supporting strengths: {', '.join(top_positive) if top_positive else 'none identified'}."
+    )
+
+    return {
+        "overview": overview,
+        "combinedReasons": combined_reasons[:6],
+    }
+
+
+def _build_score_reasons_with_gemini(base_reasons_payload, prediction_data, api_key: str):
+    if not api_key:
+        return None
+
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+
+        base_overview = str(base_reasons_payload.get("overview") or "").strip()
+        base_reasons = base_reasons_payload.get("combinedReasons") or []
+
+        prompt = (
+            "You are a credit-risk explanation writer for non-technical users. "
+            "Given prediction context and preliminary reason items, produce a cleaner deduplicated reason list. "
+            "Merge semantically duplicate items (example: 'No Existing Loans' and 'Number of Existing Loans') into one item. "
+            "Keep the direction accurate (helps/hurts). Keep impact as a number close to the input values. "
+            "Write concise, plain-English explanations. "
+            "Return ONLY JSON object with keys: overview (string), combinedReasons (array). "
+            "Each combinedReasons item must have: feature (string), direction (helps|hurts), impact (number), explanation (string). "
+            "No markdown, no extra keys.\n\n"
+            f"Borrower context: {prediction_data}\n"
+            f"Base overview: {base_overview}\n"
+            f"Base reasons: {base_reasons}"
+        )
+
+        response = model.generate_content(prompt)
+        response_text = response.text if hasattr(response, "text") else str(response)
+        parsed = _extract_json_object(response_text)
+        if not parsed:
+            return None
+
+        overview = str(parsed.get("overview") or "").strip() or base_overview
+        raw_reasons = parsed.get("combinedReasons")
+        if not isinstance(raw_reasons, list):
+            return None
+
+        cleaned_reasons = []
+        seen_keys = set()
+
+        for reason in raw_reasons:
+            if not isinstance(reason, dict):
+                continue
+            feature = str(reason.get("feature") or "").strip()
+            if not feature:
+                continue
+
+            canonical_key = _canonical_reason_key(feature)
+            if canonical_key in seen_keys:
+                continue
+            seen_keys.add(canonical_key)
+
+            direction = str(reason.get("direction") or "hurts").strip().lower()
+            if direction not in ["helps", "hurts"]:
+                direction = "hurts"
+
+            impact = abs(_to_float(reason.get("impact"), 0.0))
+            explanation = str(reason.get("explanation") or "").strip()
+            if not explanation:
+                explanation = "This factor has a meaningful influence on your score."
+
+            cleaned_reasons.append({
+                "feature": feature,
+                "direction": direction,
+                "impact": round(impact, 4),
+                "totalImpact": round(impact, 4),
+                "signalCount": 1,
+                "explanation": explanation,
+                "shapSummary": "",
+                "supportingRules": [],
+            })
+
+        if not cleaned_reasons:
+            return None
+
+        cleaned_reasons.sort(key=lambda reason: abs(_to_float(reason.get("impact"), 0.0)), reverse=True)
+
+        return {
+            "overview": overview,
+            "combinedReasons": cleaned_reasons[:6],
+        }
+    except Exception as exc:
+        logger.warning("Gemini reason synthesis failed, using fallback reasons: %s", exc)
+        return None
 
 
 def _simplify_lime_rules_with_gemini(rules, prediction_data, api_key: str):
@@ -641,6 +971,65 @@ def get_shap_explanation(user_id: str):
         raise ExplanationServiceError(500, "Failed to generate SHAP explanation") from exc
 
 
+def get_score_reasons(user_id: str):
+    try:
+        data = _get_user_prediction_data(user_id)
+        fingerprint = _compute_prediction_fingerprint(data)
+        cached = _read_insights_cache(user_id)
+
+        if cached and cached.get("profile_fingerprint") == fingerprint:
+            cached_reasons = cached.get("reasons_payload")
+            if isinstance(cached_reasons, dict) and cached_reasons.get("section") == "reason_for_score":
+                return cached_reasons
+
+        raw_shap = _credit_predictor.explain_prediction_shap(data)
+        shap_response = _format_shap_response(raw_shap)
+
+        raw_lime = _credit_predictor.explain_prediction_lime(data)
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        lime_response = _format_lime_response(raw_lime, prediction_data=data, api_key=api_key)
+        fallback_combined = _build_combined_score_reasons(
+            shap_response.get("topFactors", []),
+            lime_response.get("rules", []),
+        )
+
+        gemini_combined = _build_score_reasons_with_gemini(
+            fallback_combined,
+            data,
+            api_key,
+        )
+        combined = gemini_combined or fallback_combined
+        reason_source = "gemini" if gemini_combined else "fallback"
+
+        prediction = _to_float(
+            shap_response.get("prediction"),
+            _to_float(lime_response.get("prediction"), 0.0),
+        )
+
+        reasons_payload = {
+            "section": "reason_for_score",
+            "source": reason_source,
+            "prediction": prediction,
+            "overview": combined.get("overview", ""),
+            "combinedReasons": combined.get("combinedReasons", []),
+            "topFactors": shap_response.get("topFactors", []),
+            "rules": lime_response.get("rules", []),
+        }
+
+        _write_insights_cache(
+            user_id,
+            fingerprint,
+            reasons_payload=reasons_payload,
+            advice_payload=(cached or {}).get("advice_payload") if cached and cached.get("profile_fingerprint") == fingerprint else None,
+        )
+        return reasons_payload
+    except ExplanationServiceError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to generate score reasons")
+        raise ExplanationServiceError(500, "Failed to generate score reasons") from exc
+
+
 def get_lime_explanation(user_id: str):
     try:
         data = _get_user_prediction_data(user_id)
@@ -720,16 +1109,62 @@ def get_gemini_advice(user_id: str):
         raise ExplanationServiceError(500, "Failed to generate Gemini advice") from exc
 
 
+def get_score_advice(user_id: str):
+    try:
+        data = _get_user_prediction_data(user_id)
+        fingerprint = _compute_prediction_fingerprint(data)
+        cached = _read_insights_cache(user_id)
+
+        if cached and cached.get("profile_fingerprint") == fingerprint:
+            cached_advice = cached.get("advice_payload")
+            if isinstance(cached_advice, dict) and cached_advice.get("section") == "improvement_advice":
+                return cached_advice
+
+        advice_response = get_gemini_advice(user_id)
+        advice_payload = {
+            "section": "improvement_advice",
+            **advice_response,
+        }
+        _write_insights_cache(
+            user_id,
+            fingerprint,
+            reasons_payload=(cached or {}).get("reasons_payload") if cached and cached.get("profile_fingerprint") == fingerprint else None,
+            advice_payload=advice_payload,
+        )
+        return advice_payload
+    except ExplanationServiceError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to generate score advice")
+        raise ExplanationServiceError(500, "Failed to generate score advice") from exc
+
+
+def get_credit_score_insights(user_id: str):
+    try:
+        return {
+            "reasonForScore": get_score_reasons(user_id),
+            "improvementAdvice": get_score_advice(user_id),
+        }
+    except ExplanationServiceError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to generate score insights")
+        raise ExplanationServiceError(500, "Failed to generate score insights") from exc
+
+
 # -----------------------------
 # POST /borrower/details
 # -----------------------------
 def create_borrower_details(data):
+    _invalidate_insights_cache(data.userid)
+
     credit_history_months = to_months(
         data.creditHistoryYr, data.creditHistoryMon
     )
     loan_tenure_months = to_months(
         data.loanTenureYr, data.loanTenureMon
     )
+    validate_loan_and_asset_values(data.loanAmount, data.assetValue)
     ltv = calculate_ltv(data.loanAmount, data.assetValue)
 
     # Insert borrower
@@ -850,6 +1285,13 @@ def update_loan_info(data):
     tenure_months = to_months(
         data.loanTenureYr, data.loanTenureMon
     )
+    borrower_row = supabase.table("borrower") \
+        .select("asset_value") \
+        .eq("id", data.userid).single().execute()
+    asset_value = borrower_row.data.get("asset_value") if borrower_row.data else None
+    if asset_value is None:
+        raise ValueError("Borrower profile not found for loan update.")
+    validate_loan_and_asset_values(data.loanAmount, float(asset_value))
 
     supabase.table("borrower_loan_details") \
         .update({
@@ -859,6 +1301,8 @@ def update_loan_info(data):
         }) \
         .eq("borrower_id", data.userid) \
         .execute()
+
+    _invalidate_insights_cache(data.userid)
 
     return {"status": "updated"}
 
@@ -884,6 +1328,8 @@ def update_personal_info(data):
         .eq("id", data.userid) \
         .execute()
 
+    _invalidate_insights_cache(data.userid)
+
     return {"status": "updated"}
 
 
@@ -899,6 +1345,8 @@ def update_employment_info(data):
         .eq("id", data.userid) \
         .execute()
 
+    _invalidate_insights_cache(data.userid)
+
     return {"status": "updated"}
 
 
@@ -906,6 +1354,13 @@ def update_employment_info(data):
 # ----------------------------
 def update_credit_info(data):
     credit_history_months = to_months(data.creditHistoryYr, data.creditHistoryMon)
+    loan_row = supabase.table("borrower_loan_details") \
+        .select("loan_amount") \
+        .eq("borrower_id", data.userid).single().execute()
+    loan_amount = loan_row.data.get("loan_amount") if loan_row.data else None
+    if loan_amount is None:
+        raise ValueError("Loan details not found for borrower.")
+    validate_loan_and_asset_values(float(loan_amount), data.assetValue)
     
     supabase.table("borrower") \
         .update({
@@ -915,6 +1370,8 @@ def update_credit_info(data):
         }) \
         .eq("id", data.userid) \
         .execute()
+
+    _invalidate_insights_cache(data.userid)
 
     return {"status": "updated"}
 

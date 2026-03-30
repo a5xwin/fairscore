@@ -114,6 +114,34 @@ export interface GeminiAdvice {
     improvementTips: string[];
 }
 
+export interface ScoreReasons {
+    section: 'reason_for_score';
+    source?: 'gemini' | 'fallback';
+    prediction: number;
+    overview?: string;
+    combinedReasons?: Array<{
+        feature: string;
+        direction: 'helps' | 'hurts';
+        impact: number;
+        totalImpact?: number;
+        signalCount?: number;
+        explanation: string;
+        shapSummary: string;
+        supportingRules: Array<{
+            rule: string;
+            effect: 'helps' | 'hurts';
+            impact: number;
+            summary: string;
+        }>;
+    }>;
+    topFactors: ShapFactor[];
+    rules: LimeRule[];
+}
+
+export interface ScoreAdvice extends GeminiAdvice {
+    section: 'improvement_advice';
+}
+
 export interface BorrowerProfile {
     id: string;
     dob: string;
@@ -211,6 +239,11 @@ export interface ApprovedBorrower {
     loanTenureMon: number;
 }
 
+export interface LenderReviewInsights {
+    shap: ShapExplanation;
+    advice: GeminiAdvice;
+}
+
 export const authService = {
     register: async (data: RegisterPayload): Promise<AuthResponse> => {
         const response = await api.post('/register', data);
@@ -257,19 +290,42 @@ export const authService = {
         return response.data;
     },
 
-    getShapExplanation: async (userid: string): Promise<ShapExplanation> => {
-        const response = await api.get('/borrower/explain/shap', { params: { userid } });
+    getScoreReasons: async (userid: string): Promise<ScoreReasons> => {
+        const response = await api.get('/borrower/score-reasons', { params: { userid } });
         return response.data;
+    },
+
+    getScoreAdvice: async (userid: string): Promise<ScoreAdvice> => {
+        const response = await api.get('/borrower/score-advice', { params: { userid } });
+        return response.data;
+    },
+
+    getShapExplanation: async (userid: string): Promise<ShapExplanation> => {
+        const reasons = await authService.getScoreReasons(userid);
+        return {
+            prediction: reasons.prediction,
+            topFactors: reasons.topFactors,
+            model: 'shap',
+        };
     },
 
     getLimeExplanation: async (userid: string): Promise<LimeExplanation> => {
-        const response = await api.get('/borrower/explain/lime', { params: { userid } });
-        return response.data;
+        const reasons = await authService.getScoreReasons(userid);
+        return {
+            prediction: reasons.prediction,
+            rules: reasons.rules,
+            model: 'lime',
+        };
     },
 
     getGeminiAdvice: async (userid: string): Promise<GeminiAdvice> => {
-        const response = await api.get('/borrower/advice/gemini', { params: { userid } });
-        return response.data;
+        const advice = await authService.getScoreAdvice(userid);
+        return {
+            prediction: advice.prediction,
+            advice: advice.advice,
+            source: advice.source,
+            improvementTips: advice.improvementTips,
+        };
     },
 
         getBorrowerProfile: async (userid: string): Promise<BorrowerProfile> => {
@@ -336,6 +392,11 @@ export const authService = {
     // Approved borrowers
     getApprovedBorrowers: async (lenderId: string): Promise<ApprovedBorrower[]> => {
         const response = await api.get('/lender/approved-borrowers', { params: { lenderId } });
+        return response.data;
+    },
+
+    getLenderReviewInsights: async (lenderId: string, borrowerId: string): Promise<LenderReviewInsights> => {
+        const response = await api.get('/lender/review-insights', { params: { lenderId, borrowerId } });
         return response.data;
     },
 };
