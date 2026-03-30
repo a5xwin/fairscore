@@ -1,10 +1,10 @@
 {
   "base_models": {
-    "random_forest": "D:\\BTech Related\\Final_Year_Project\\backend\\models\\random_forest_model.joblib",
-    "lightgbm": "D:\\BTech Related\\Final_Year_Project\\backend\\models\\lightgbm_model.joblib",
-    "tab_transformer": "D:\\BTech Related\\Final_Year_Project\\backend\\models\\tab_transformer_model.pth"
+    "random_forest": "C:\\Users\\Lanovo\\Desktop\\project\\backend\\models\\random_forest_model.joblib",
+    "lightgbm": "C:\\Users\\Lanovo\\Desktop\\project\\backend\\models\\lightgbm_model.joblib",
+    "tab_transformer": "C:\\Users\\Lanovo\\Desktop\\project\\backend\\models\\tab_transformer_model.pth"
   },
-  "meta_learner": "D:\\BTech Related\\Final_Year_Project\\backend\\models\\meta_learner.joblib",
+  "meta_learner": "C:\\Users\\Lanovo\\Desktop\\project\\backend\\models\\meta_learner.joblib",
   "feature_columns": [
     "Age",
     "Income",
@@ -18,14 +18,14 @@
     "Occupation"
   ],
   "coefficients": {
-    "random_forest": 3.795576972587311,
-    "lightgbm": -2.7986682502563083,
-    "tab_transformer": 0.0020643561035869062,
-    "intercept": 0.6467624882835707
+    "random_forest": 3.65525909955592,
+    "lightgbm": -2.65691288935102,
+    "tab_transformer": 0.0007268091589907044,
+    "intercept": 0.5790447498175126
   },
   "test_performance": {
-    "r2_score": 0.9946262015423243,
-    "mae": 9.402366448994641,
-    "rmse": 11.972342388389713
+    "r2_score": 0.9950411770294819,
+    "mae": 8.991493885890344,
+    "rmse": 11.500791851693862
   }
 }
