@@ -20,6 +20,10 @@ const Register = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (password.length < 7) {
+        toast.error("Password must be at least 7 characters long");
+        return;
+    }
         setIsLoading(true);
 
         try {

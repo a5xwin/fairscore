@@ -20,6 +20,13 @@ def verify_password(password: str, hashed: str) -> bool:
 # Register
 # -----------------------------
 def register_user(data):
+    #password length validation
+    if len(data.password) < 7:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 7 characters long"
+        )
+    
     email = data.email.lower().strip()
 
     # Check if user exists
