@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import os
 import warnings
+import lightgbm
 warnings.filterwarnings('ignore')
 
 print("=" * 60)
