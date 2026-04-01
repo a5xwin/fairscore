@@ -6,9 +6,9 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/context/AuthContext';
-import { authService, LoanRequestBorrower } from '@/services/authService';
+import { authService, GeminiAdvice, LoanRequestBorrower, ShapExplanation } from '@/services/authService';
 import { toast } from 'sonner';
-import { Eye, CheckCircle, SkipForward, FileText } from 'lucide-react';
+import { Eye, CheckCircle, SkipForward, FileText, Sparkles, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 const riskBadge = (risk: string) => {
     const r = risk.toLowerCase();
@@ -26,6 +26,7 @@ const formatTenure = (yr: number, mon: number) => {
 
 const LoanRequests = () => {
     const { user } = useAuth();
+    const lenderId = user?.id;
     const [requests, setRequests] = useState<LoanRequestBorrower[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -33,12 +34,17 @@ const LoanRequests = () => {
     // Review dialog
     const [selected, setSelected] = useState<LoanRequestBorrower | null>(null);
     const [actionLoading, setActionLoading] = useState<'approve' | 'skip' | null>(null);
+    const [explanationLoading, setExplanationLoading] = useState(false);
+    const [shapExplanation, setShapExplanation] = useState<ShapExplanation | null>(null);
+    const [geminiAdvice, setGeminiAdvice] = useState<GeminiAdvice | null>(null);
+    const [shapError, setShapError] = useState('');
+    const [geminiError, setGeminiError] = useState('');
 
     useEffect(() => {
         const fetchRequests = async () => {
-            if (!user?.id) return;
+            if (!lenderId) return;
             try {
-                const data = await authService.getLoanRequests(user.id);
+                const data = await authService.getLoanRequests(lenderId);
                 setRequests(data);
             } catch {
                 setError('Failed to load loan requests.');
@@ -47,7 +53,44 @@ const LoanRequests = () => {
             }
         };
         fetchRequests();
-    }, [user?.id]);
+    }, [lenderId]);
+
+    useEffect(() => {
+        const preloadExplanations = async () => {
+            if (!selected?.userid) {
+                setShapExplanation(null);
+                setGeminiAdvice(null);
+                setShapError('');
+                setGeminiError('');
+                return;
+            }
+            if (!lenderId) return;
+
+            setExplanationLoading(true);
+            setShapExplanation(null);
+            setGeminiAdvice(null);
+            setShapError('');
+            setGeminiError('');
+
+            const [shapResult] = await Promise.allSettled([
+                authService.getLenderReviewInsights(lenderId, selected.userid),
+            ]);
+
+            if (shapResult.status === 'fulfilled') {
+                setShapExplanation(shapResult.value.shap);
+                setGeminiAdvice(shapResult.value.advice);
+            } else {
+                const e = shapResult.reason as { response?: { data?: { detail?: string } } };
+                const detail = e?.response?.data?.detail || 'Could not load borrower review insights.';
+                setShapError(detail);
+                setGeminiError(detail);
+            }
+
+            setExplanationLoading(false);
+        };
+
+        preloadExplanations();
+    }, [selected?.userid, lenderId]);
 
     const handleApprove = async () => {
         if (!user?.id || !selected) return;
@@ -136,14 +179,14 @@ const LoanRequests = () => {
 
             {/* Review Dialog */}
             <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="flex max-h-[90vh] flex-col overflow-hidden sm:max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Review Borrower</DialogTitle>
                         <DialogDescription>Review the borrower's details before making a decision.</DialogDescription>
                     </DialogHeader>
                     {selected && (
-                        <div className="grid gap-3 py-4 text-sm">
-                            <div className="grid grid-cols-2 gap-2">
+                        <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto py-4 pr-1 text-sm">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
                                     <p className="text-muted-foreground">Name</p>
                                     <p className="font-semibold">{selected.name}</p>
@@ -153,7 +196,7 @@ const LoanRequests = () => {
                                     <p className="font-semibold">{selected.creditScore}</p>
                                 </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
                                     <p className="text-muted-foreground">Risk Level</p>
                                     <div>{riskBadge(selected.risk)}</div>
@@ -163,7 +206,7 @@ const LoanRequests = () => {
                                     <p className="font-semibold">₹{selected.income.toLocaleString('en-IN')}</p>
                                 </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
                                     <p className="text-muted-foreground">Expecting Loan Amount</p>
                                     <p className="font-semibold">₹{selected.loanAmount.toLocaleString('en-IN')}</p>
@@ -171,6 +214,99 @@ const LoanRequests = () => {
                                 <div>
                                     <p className="text-muted-foreground">Loan Tenure</p>
                                     <p className="font-semibold">{formatTenure(selected.loanTenureYr, selected.loanTenureMon)}</p>
+                                </div>
+                            </div>
+
+                            <div className="rounded-lg border p-4 space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h4 className="font-semibold flex items-center gap-2">
+                                        <ShieldCheck className="h-4 w-4 text-primary" />
+                                        Score & Risk Explanation
+                                    </h4>
+                                    {explanationLoading && <span className="text-xs text-muted-foreground">Loading analysis...</span>}
+                                </div>
+
+                                <div className="space-y-3">
+                                    <h5 className="text-sm font-medium">Borrower Score Factors</h5>
+                                    {explanationLoading && !shapExplanation ? (
+                                        <div className="space-y-2">
+                                            {[1, 2, 3].map((i) => (
+                                                <Skeleton key={i} className="h-8 w-full" />
+                                            ))}
+                                        </div>
+                                    ) : shapError ? (
+                                        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 flex items-start gap-2">
+                                            <AlertTriangle className="h-4 w-4 mt-0.5" />
+                                            <span>{shapError}</span>
+                                        </div>
+                                    ) : shapExplanation?.topFactors?.length ? (
+                                        <div className="space-y-2">
+                                            {shapExplanation.topFactors.slice(0, 5).map((factor, idx, arr) => {
+                                                const maxImpact = Math.max(...arr.map((f) => Math.abs(f.impact)), 1);
+                                                const width = Math.max(8, (Math.abs(factor.impact) / maxImpact) * 100);
+                                                const positive = factor.direction === 'helps';
+
+                                                return (
+                                                    <div key={`${factor.feature}-${idx}`} className="space-y-1">
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <span className="font-medium text-xs sm:text-sm">{factor.feature}</span>
+                                                            <span className={`text-xs font-medium ${positive ? 'text-green-700' : 'text-red-700'}`}>
+                                                                {positive ? 'Helps score' : 'Hurts score'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="h-2 rounded bg-muted overflow-hidden">
+                                                            <div
+                                                                className={`h-full ${positive ? 'bg-green-500' : 'bg-red-500'}`}
+                                                                style={{ width: `${width}%` }}
+                                                            />
+                                                        </div>
+                                                        <p className="text-xs text-muted-foreground">
+                                                            {`${factor.feature} ${positive ? 'supports' : 'reduces'} the borrower's credit score.`}
+                                                        </p>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <p className="text-muted-foreground text-sm">No SHAP factors available for this borrower.</p>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2">
+                                    <h5 className="text-sm font-medium flex items-center gap-2">
+                                        <Sparkles className="h-4 w-4 text-primary" />
+                                        AI Recommendation
+                                    </h5>
+                                    {explanationLoading && !geminiAdvice ? (
+                                        <Skeleton className="h-16 w-full" />
+                                    ) : geminiError ? (
+                                        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 flex items-start gap-2">
+                                            <AlertTriangle className="h-4 w-4 mt-0.5" />
+                                            <span>{geminiError}</span>
+                                        </div>
+                                    ) : geminiAdvice ? (
+                                        <div className="rounded-md bg-muted/50 p-3 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs text-muted-foreground">Advice source</span>
+                                                <Badge variant="outline" className="text-xs">
+                                                    {geminiAdvice.source === 'gemini' ? 'Gemini' : 'Fallback'}
+                                                </Badge>
+                                            </div>
+                                            <p className="text-sm leading-relaxed whitespace-pre-wrap">{geminiAdvice.advice}</p>
+                                            {geminiAdvice.improvementTips?.length > 0 && (
+                                                <div>
+                                                    <p className="text-xs font-medium text-muted-foreground mb-1">Decision Tips</p>
+                                                    <ul className="list-disc pl-5 space-y-1 text-xs text-muted-foreground">
+                                                        {geminiAdvice.improvementTips.slice(0, 4).map((tip, idx) => (
+                                                            <li key={idx}>{tip}</li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <p className="text-muted-foreground text-sm">No AI recommendation available for this borrower.</p>
+                                    )}
                                 </div>
                             </div>
                         </div>

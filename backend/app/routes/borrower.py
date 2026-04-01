@@ -2,19 +2,27 @@ from fastapi import APIRouter, HTTPException, status
 from app.schemas.borrower import (
     BorrowerDetailsSchema,
     LoanUpdateSchema,
-    ApplyLoanSchema
+    ApplyLoanSchema,
+    BorrowerPersonalUpdateSchema,
+    BorrowerEmploymentUpdateSchema,
+    BorrowerCreditUpdateSchema,
 )
 from app.services.borrower_services import (
     create_borrower_details,
     get_credit_info,
+    get_profile_details,
     get_loan_info,
     update_loan_info,
     get_lenders,
     apply_to_lender,
     get_approved_lenders,
-    get_shap_explanation,
-    get_lime_explanation,
-    get_gemini_advice
+    get_score_reasons,
+    get_score_advice,
+    get_credit_score_insights,
+    update_personal_info,
+    update_employment_info,
+    update_credit_info,
+    ExplanationServiceError,
 )
 
 router = APIRouter(prefix="/borrower", tags=["Borrower"])
@@ -25,6 +33,11 @@ router = APIRouter(prefix="/borrower", tags=["Borrower"])
 def borrower_details(data: BorrowerDetailsSchema):
     try:
         return create_borrower_details(data)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -43,6 +56,17 @@ def credit_info(userid: str):
         )
 
 
+@router.get("/profile-details")
+def profile_details(userid: str):
+    try:
+        return get_profile_details(userid)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile information not found"
+        )
+
+
 @router.get("/loan-info")
 def loan_info(userid: str):
     try:
@@ -58,10 +82,53 @@ def loan_info(userid: str):
 def loan_update(data: LoanUpdateSchema):
     try:
         return update_loan_info(data)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to update loan details"
+        )
+
+
+@router.put("/personal-update")
+def personal_update(data: BorrowerPersonalUpdateSchema):
+    try:
+        return update_personal_info(data)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to update personal information"
+        )
+
+
+@router.put("/employment-update")
+def employment_update(data: BorrowerEmploymentUpdateSchema):
+    try:
+        return update_employment_info(data)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to update employment information"
+        )
+
+
+@router.put("/credit-update")
+def credit_update(data: BorrowerCreditUpdateSchema):
+    try:
+        return update_credit_info(data)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to update credit information"
         )
 
 
@@ -105,34 +172,40 @@ def approved_lenders(userid: str):
         )
 
 
-@router.get("/explain/shap")
-def shap_explanation(userid: str):
+@router.get("/score-reasons")
+def score_reasons(userid: str):
     try:
-        return get_shap_explanation(userid)
-    except Exception as e:
+        return get_score_reasons(userid)
+    except ExplanationServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate SHAP explanation: {str(e)}"
+            detail="Failed to generate score reasons"
         )
 
 
-@router.get("/explain/lime")
-def lime_explanation(userid: str):
+@router.get("/score-advice")
+def score_advice(userid: str):
     try:
-        return get_lime_explanation(userid)
-    except Exception as e:
+        return get_score_advice(userid)
+    except ExplanationServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate LIME explanation: {str(e)}"
+            detail="Failed to generate score advice"
         )
 
 
-@router.get("/advice/gemini")
-def gemini_advice(userid: str):
+@router.get("/score-insights")
+def score_insights(userid: str):
     try:
-        return get_gemini_advice(userid)
-    except Exception as e:
+        return get_credit_score_insights(userid)
+    except ExplanationServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate Gemini advice: {str(e)}"
+            detail="Failed to generate score insights"
         )

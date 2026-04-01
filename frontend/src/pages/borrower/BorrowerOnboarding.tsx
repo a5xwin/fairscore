@@ -52,11 +52,38 @@ const BorrowerOnboarding = () => {
 
   const cities = state ? statesWithCities[state] || [] : [];
 
+  const toNumber = (value: string): number => Number(value);
+  const isPositiveNumber = (value: string): boolean => Number.isFinite(toNumber(value)) && toNumber(value) > 0;
+  const isNonNegativeInteger = (value: string): boolean => /^\d+$/.test(value);
+
   const validateStep = (step: number): boolean => {
     switch (step) {
-      case 0:
+      case 0: {
         if (!dob || !gender || !state || !city || !phone) {
           toast.error('Please fill all personal information fields.');
+          return false;
+        }
+        const selectedDate = new Date(dob);
+        if (Number.isNaN(selectedDate.getTime())) {
+          toast.error('Please enter a valid date of birth.');
+          return false;
+        }
+        const today = new Date();
+        let age = today.getFullYear() - selectedDate.getFullYear();
+        const monthDiff = today.getMonth() - selectedDate.getMonth();
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < selectedDate.getDate())) {
+          age -= 1;
+        }
+        if (age < 18 || age > 100) {
+          toast.error('Applicant age must be between 18 and 100 years.');
+          return false;
+        }
+        if (!states.includes(state)) {
+          toast.error('Please select a valid state.');
+          return false;
+        }
+        if (!(statesWithCities[state] || []).includes(city)) {
+          toast.error('Please select a valid city for the chosen state.');
           return false;
         }
         if (!/^\d{10}$/.test(phone)) {
@@ -64,13 +91,30 @@ const BorrowerOnboarding = () => {
           return false;
         }
         return true;
+      }
       case 1:
         if (!empProfile || !occupation || !income) {
           toast.error('Please fill all employment details.');
           return false;
         }
+        if (!employmentProfiles.includes(empProfile)) {
+          toast.error('Please select a valid employment profile.');
+          return false;
+        }
         if (occupation === 'Other' && !customOccupation.trim()) {
           toast.error('Please enter your specific occupation.');
+          return false;
+        }
+        if (!occupations.includes(occupation)) {
+          toast.error('Please select a valid occupation.');
+          return false;
+        }
+        if (occupation === 'Other' && (customOccupation.trim().length < 2 || customOccupation.trim().length > 80)) {
+          toast.error('Custom occupation must be between 2 and 80 characters.');
+          return false;
+        }
+        if (!isPositiveNumber(income)) {
+          toast.error('Income must be greater than 0.');
           return false;
         }
         return true;
@@ -79,10 +123,50 @@ const BorrowerOnboarding = () => {
           toast.error('Please fill all credit history fields.');
           return false;
         }
+        if (!isNonNegativeInteger(creditHistoryYr) || Number(creditHistoryYr) > 80) {
+          toast.error('Credit history years must be between 0 and 80.');
+          return false;
+        }
+        if (!isNonNegativeInteger(creditHistoryMon) || Number(creditHistoryMon) > 11) {
+          toast.error('Credit history months must be between 0 and 11.');
+          return false;
+        }
+        if (!isNonNegativeInteger(loanNo) || Number(loanNo) > 50) {
+          toast.error('Number of existing loans must be between 0 and 50.');
+          return false;
+        }
+        if (!isPositiveNumber(assetValue)) {
+          toast.error('Asset value must be greater than 0.');
+          return false;
+        }
         return true;
       case 3:
         if (!loanAmount || loanTenureYr === '' || loanTenureMon === '' || !purpose) {
           toast.error('Please fill all loan details.');
+          return false;
+        }
+        if (!loanPurposes.includes(purpose)) {
+          toast.error('Please select a valid loan purpose.');
+          return false;
+        }
+        if (!isPositiveNumber(loanAmount)) {
+          toast.error('Loan amount must be greater than 0.');
+          return false;
+        }
+        if (!isNonNegativeInteger(loanTenureYr) || Number(loanTenureYr) > 30) {
+          toast.error('Loan tenure years must be between 0 and 30.');
+          return false;
+        }
+        if (!isNonNegativeInteger(loanTenureMon) || Number(loanTenureMon) > 11) {
+          toast.error('Loan tenure months must be between 0 and 11.');
+          return false;
+        }
+        if (Number(loanTenureYr) === 0 && Number(loanTenureMon) === 0) {
+          toast.error('Loan tenure must be at least 1 month.');
+          return false;
+        }
+        if (Number(loanAmount) > Number(assetValue)) {
+          toast.error('Loan amount cannot exceed asset value.');
           return false;
         }
         return true;
@@ -103,18 +187,23 @@ const BorrowerOnboarding = () => {
 
   const handleSubmit = async () => {
     if (!validateStep(currentStep)) return;
+    if (!user?.id) {
+      toast.error('User session not found. Please login again.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       const payload = {
-        userid: user?.id ?? '',
+        userid: user.id,
         dob,
         gender,
         state,
         city,
         phone,
         empProfile,
-        occupation: occupation === 'Other' ? customOccupation : occupation,
+        occupation: occupation === 'Other' ? customOccupation.trim() : occupation,
         income: Number(income),
         creditHistoryYr: Number(creditHistoryYr),
         creditHistoryMon: Number(creditHistoryMon),
@@ -304,7 +393,7 @@ const BorrowerOnboarding = () => {
                     id="income"
                     type="number"
                     placeholder="e.g. 50000"
-                    min={0}
+                    min={1}
                     required
                     value={income}
                     onChange={(e) => setIncome(e.target.value)}
@@ -327,8 +416,9 @@ const BorrowerOnboarding = () => {
                         placeholder="Years"
                         min={0}
                         max={50}
+                        step={1}
                         value={creditHistoryYr}
-                        onChange={(e) => setCreditHistoryYr(e.target.value)}
+                        onChange={(e) => setCreditHistoryYr(e.target.value.replace(/[^\d]/g, ''))}
                       />
                     </div>
                     <div className="space-y-1">
@@ -339,8 +429,9 @@ const BorrowerOnboarding = () => {
                         placeholder="Months"
                         min={0}
                         max={11}
+                        step={1}
                         value={creditHistoryMon}
-                        onChange={(e) => setCreditHistoryMon(e.target.value)}
+                        onChange={(e) => setCreditHistoryMon(e.target.value.replace(/[^\d]/g, ''))}
                       />
                     </div>
                   </div>
@@ -353,8 +444,9 @@ const BorrowerOnboarding = () => {
                     type="number"
                     placeholder="e.g. 2"
                     min={0}
+                    step={1}
                     value={loanNo}
-                    onChange={(e) => setLoanNo(e.target.value)}
+                    onChange={(e) => setLoanNo(e.target.value.replace(/[^\d]/g, ''))}
                   />
                 </div>
 
@@ -364,7 +456,7 @@ const BorrowerOnboarding = () => {
                     id="assetValue"
                     type="number"
                     placeholder="e.g. 500000"
-                    min={0}
+                    min={1}
                     value={assetValue}
                     onChange={(e) => setAssetValue(e.target.value)}
                   />
@@ -381,7 +473,7 @@ const BorrowerOnboarding = () => {
                     id="loanAmount"
                     type="number"
                     placeholder="e.g. 200000"
-                    min={0}
+                    min={1}
                     required
                     value={loanAmount}
                     onChange={(e) => setLoanAmount(e.target.value)}
@@ -399,8 +491,9 @@ const BorrowerOnboarding = () => {
                         placeholder="Years"
                         min={0}
                         max={30}
+                        step={1}
                         value={loanTenureYr}
-                        onChange={(e) => setLoanTenureYr(e.target.value)}
+                        onChange={(e) => setLoanTenureYr(e.target.value.replace(/[^\d]/g, ''))}
                       />
                     </div>
                     <div className="space-y-1">
@@ -411,8 +504,9 @@ const BorrowerOnboarding = () => {
                         placeholder="Months"
                         min={0}
                         max={11}
+                        step={1}
                         value={loanTenureMon}
-                        onChange={(e) => setLoanTenureMon(e.target.value)}
+                        onChange={(e) => setLoanTenureMon(e.target.value.replace(/[^\d]/g, ''))}
                       />
                     </div>
                   </div>

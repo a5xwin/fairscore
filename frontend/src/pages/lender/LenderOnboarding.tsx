@@ -21,22 +21,52 @@ const LenderOnboarding = () => {
     const [loanAmountTo, setLoanAmountTo] = useState('');
     const [interest, setInterest] = useState('');
 
+    const isFiniteNumber = (value: string): boolean => Number.isFinite(Number(value));
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
+        if (!user?.id) {
+            toast.error('User session not found. Please login again.');
+            return;
+        }
         if (!type || !capacity || !loanAmountFrom || !loanAmountTo || !interest) {
             toast.error('Please fill all fields.');
+            return;
+        }
+        if (!['individual', 'financial_institution'].includes(type)) {
+            toast.error('Please select a valid lender type.');
+            return;
+        }
+        if (!isFiniteNumber(capacity) || Number(capacity) <= 0) {
+            toast.error('Lending capacity must be greater than 0.');
+            return;
+        }
+        if (!isFiniteNumber(loanAmountFrom) || Number(loanAmountFrom) <= 0) {
+            toast.error('Loan amount from must be greater than 0.');
+            return;
+        }
+        if (!isFiniteNumber(loanAmountTo) || Number(loanAmountTo) <= 0) {
+            toast.error('Loan amount to must be greater than 0.');
             return;
         }
         if (Number(loanAmountFrom) >= Number(loanAmountTo)) {
             toast.error('Loan range "From" must be less than "To".');
             return;
         }
+        if (Number(loanAmountTo) > Number(capacity)) {
+            toast.error('Maximum loan amount cannot exceed lending capacity.');
+            return;
+        }
+        if (!isFiniteNumber(interest) || Number(interest) <= 0 || Number(interest) > 100) {
+            toast.error('Interest rate must be greater than 0 and at most 100.');
+            return;
+        }
 
         setIsSubmitting(true);
         try {
             await authService.submitLenderDetails({
-                lenderId: user?.id ?? '',
+                lenderId: user.id,
                 type,
                 capacity: Number(capacity),
                 loanAmountFrom: Number(loanAmountFrom),
@@ -89,7 +119,7 @@ const LenderOnboarding = () => {
                                 id="capacity"
                                 type="number"
                                 placeholder="e.g. 5000000"
-                                min={0}
+                                min={1}
                                 required
                                 value={capacity}
                                 onChange={(e) => setCapacity(e.target.value)}
@@ -105,7 +135,7 @@ const LenderOnboarding = () => {
                                     <Input
                                         type="number"
                                         placeholder="Min amount"
-                                        min={0}
+                                        min={1}
                                         required
                                         value={loanAmountFrom}
                                         onChange={(e) => setLoanAmountFrom(e.target.value)}
@@ -116,7 +146,7 @@ const LenderOnboarding = () => {
                                     <Input
                                         type="number"
                                         placeholder="Max amount"
-                                        min={0}
+                                        min={1}
                                         required
                                         value={loanAmountTo}
                                         onChange={(e) => setLoanAmountTo(e.target.value)}
@@ -133,7 +163,7 @@ const LenderOnboarding = () => {
                                 type="number"
                                 step="0.01"
                                 placeholder="e.g. 8.5"
-                                min={0}
+                                min={0.01}
                                 max={100}
                                 required
                                 value={interest}

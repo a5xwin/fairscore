@@ -4,12 +4,9 @@ import { useAuth } from '../../context/AuthContext';
 import {
     LayoutDashboard,
     CreditCard,
-    FileText,
-    Users,
     LogOut,
     Settings,
     Menu,
-    X,
     CheckCircle,
     Send,
     ClipboardList
@@ -40,15 +37,15 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
     const links = user.role === 'borrower' ? borrowerLinks : lenderLinks;
 
-    const SidebarContent = () => (
-        <div className="flex h-full flex-col gap-4 py-4">
+    const SidebarContent = ({ className }: { className?: string }) => (
+        <div className={cn("flex h-full min-h-0 flex-col gap-4 py-4", className)}>
             <div className="px-6 flex items-center gap-2">
                 <div className="h-8 w-8 rounded-lg bg-primary/20 flex items-center justify-center">
                     <span className="font-bold text-primary">FS</span>
                 </div>
                 <span className="text-xl font-bold tracking-tight">FairScore</span>
             </div>
-            <div className="flex-1 px-4 mt-6">
+            <div className="mt-6 flex-1 overflow-y-auto px-4">
                 <nav className="grid gap-2">
                     {links.map((link) => (
                         <Link
@@ -67,6 +64,19 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                 </nav>
             </div>
             <div className="px-4 mt-auto">
+                {user.role === 'borrower' && (
+                    <Link
+                        to="/borrower/profile"
+                        onClick={() => setIsMobileOpen(false)}
+                        className={cn(
+                            "mb-2 flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all hover:bg-accent hover:text-accent-foreground",
+                            location.pathname === '/borrower/profile' ? "bg-accent/80 text-accent-foreground" : "text-muted-foreground"
+                        )}
+                    >
+                        <Settings className="h-4 w-4" />
+                        Profile
+                    </Link>
+                )}
                 <Button variant="ghost" className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive" onClick={logout}>
                     <LogOut className="h-4 w-4" />
                     Logout
@@ -77,8 +87,8 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
     return (
         <div className="grid min-h-screen w-full lg:grid-cols-[280px_1fr]">
-            <div className="hidden border-r bg-muted/40 lg:block">
-                <SidebarContent />
+            <div className="hidden border-r bg-muted/40 lg:sticky lg:top-0 lg:block lg:h-screen">
+                <SidebarContent className="h-screen" />
             </div>
             <div className="flex flex-col">
                 <header className="flex h-14 items-center gap-4 border-b bg-muted/40 px-6 lg:hidden">
@@ -90,7 +100,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                             </Button>
                         </SheetTrigger>
                         <SheetContent side="left" className="flex flex-col p-0 w-64">
-                            <SidebarContent />
+                            <SidebarContent className="h-full" />
                         </SheetContent>
                     </Sheet>
                     <div className="font-semibold">FairScore</div>

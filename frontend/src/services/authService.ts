@@ -81,6 +81,106 @@ export interface ApprovedLender {
     interest: number;
 }
 
+export interface ShapFactor {
+    feature: string;
+    direction: 'helps' | 'hurts';
+    impact: number;
+    summary: string;
+}
+
+export interface ShapExplanation {
+    prediction: number;
+    topFactors: ShapFactor[];
+    model: 'shap';
+}
+
+export interface LimeRule {
+    rule: string;
+    effect: 'helps' | 'hurts';
+    impact: number;
+    summary: string;
+}
+
+export interface LimeExplanation {
+    prediction: number;
+    rules: LimeRule[];
+    model: 'lime';
+}
+
+export interface GeminiAdvice {
+    prediction: number;
+    advice: string;
+    source: 'gemini' | 'fallback';
+    improvementTips: string[];
+}
+
+export interface ScoreReasons {
+    section: 'reason_for_score';
+    source?: 'gemini' | 'fallback';
+    prediction: number;
+    overview?: string;
+    combinedReasons?: Array<{
+        feature: string;
+        direction: 'helps' | 'hurts';
+        impact: number;
+        totalImpact?: number;
+        signalCount?: number;
+        explanation: string;
+        shapSummary: string;
+        supportingRules: Array<{
+            rule: string;
+            effect: 'helps' | 'hurts';
+            impact: number;
+            summary: string;
+        }>;
+    }>;
+    topFactors: ShapFactor[];
+    rules: LimeRule[];
+}
+
+export interface ScoreAdvice extends GeminiAdvice {
+    section: 'improvement_advice';
+}
+
+export interface BorrowerProfile {
+    id: string;
+    dob: string;
+    gender: string;
+    state: string;
+    city: string;
+    phone: string;
+    empProfile: string;
+    occupation: string;
+    income: number;
+    creditHistoryYr: number;
+    creditHistoryMon: number;
+    loanNo: number;
+    assetValue: number;
+}
+
+export interface BorrowerPersonalUpdatePayload {
+    userid: string;
+    dob: string;
+    gender: string;
+    state: string;
+    city: string;
+    phone: string;
+}
+
+export interface BorrowerEmploymentUpdatePayload {
+    userid: string;
+    empProfile: string;
+    occupation: string;
+    income: number;
+}
+
+export interface BorrowerCreditUpdatePayload {
+    userid: string;
+    creditHistoryYr: number;
+    creditHistoryMon: number;
+    loanNo: number;
+    assetValue: number;
+}
 // --- Lender interfaces ---
 
 export interface LenderDetailsPayload {
@@ -139,6 +239,11 @@ export interface ApprovedBorrower {
     loanTenureMon: number;
 }
 
+export interface LenderReviewInsights {
+    shap: ShapExplanation;
+    advice: GeminiAdvice;
+}
+
 export const authService = {
     register: async (data: RegisterPayload): Promise<AuthResponse> => {
         const response = await api.post('/register', data);
@@ -185,6 +290,64 @@ export const authService = {
         return response.data;
     },
 
+    getScoreReasons: async (userid: string): Promise<ScoreReasons> => {
+        const response = await api.get('/borrower/score-reasons', { params: { userid } });
+        return response.data;
+    },
+
+    getScoreAdvice: async (userid: string): Promise<ScoreAdvice> => {
+        const response = await api.get('/borrower/score-advice', { params: { userid } });
+        return response.data;
+    },
+
+    getShapExplanation: async (userid: string): Promise<ShapExplanation> => {
+        const reasons = await authService.getScoreReasons(userid);
+        return {
+            prediction: reasons.prediction,
+            topFactors: reasons.topFactors,
+            model: 'shap',
+        };
+    },
+
+    getLimeExplanation: async (userid: string): Promise<LimeExplanation> => {
+        const reasons = await authService.getScoreReasons(userid);
+        return {
+            prediction: reasons.prediction,
+            rules: reasons.rules,
+            model: 'lime',
+        };
+    },
+
+    getGeminiAdvice: async (userid: string): Promise<GeminiAdvice> => {
+        const advice = await authService.getScoreAdvice(userid);
+        return {
+            prediction: advice.prediction,
+            advice: advice.advice,
+            source: advice.source,
+            improvementTips: advice.improvementTips,
+        };
+    },
+
+        getBorrowerProfile: async (userid: string): Promise<BorrowerProfile> => {
+            const response = await api.get('/borrower/profile-details', { params: { userid } });
+            return response.data;
+        },
+
+        updatePersonalInfo: async (data: BorrowerPersonalUpdatePayload): Promise<{ status: string }> => {
+            const response = await api.put('/borrower/personal-update', data);
+            return response.data;
+        },
+
+        updateEmploymentInfo: async (data: BorrowerEmploymentUpdatePayload): Promise<{ status: string }> => {
+            const response = await api.put('/borrower/employment-update', data);
+            return response.data;
+        },
+
+        updateCreditInfo: async (data: BorrowerCreditUpdatePayload): Promise<{ status: string }> => {
+            const response = await api.put('/borrower/credit-update', data);
+            return response.data;
+        },
+
     getProfile: async () => {
         const response = await api.get('/borrower/profile');
         return response.data;
@@ -229,6 +392,11 @@ export const authService = {
     // Approved borrowers
     getApprovedBorrowers: async (lenderId: string): Promise<ApprovedBorrower[]> => {
         const response = await api.get('/lender/approved-borrowers', { params: { lenderId } });
+        return response.data;
+    },
+
+    getLenderReviewInsights: async (lenderId: string, borrowerId: string): Promise<LenderReviewInsights> => {
+        const response = await api.get('/lender/review-insights', { params: { lenderId, borrowerId } });
         return response.data;
     },
 };

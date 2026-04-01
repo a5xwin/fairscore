@@ -2,3 +2,4 @@ lightgbm
 torch
 shap
 lime
+google-generativeai

@@ -29,7 +29,7 @@ const Login = () => {
                 role: data.role,
             };
 
-            login(user, data.token ?? '');
+            login(user, data.token);
             navigate(`/${data.role}/dashboard`);
             toast.success(`Welcome back, ${data.name}!`);
         } catch (error: any) {
