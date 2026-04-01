@@ -1279,6 +1279,21 @@ def get_loan_info(user_id: str):
 
 
 # -----------------------------
+# GET /borrower/onboarding-status
+# Check if borrower has completed onboarding
+# Returns True if borrower record exists, False otherwise
+# -----------------------------
+def check_borrower_onboarding(user_id: str):
+    try:
+        res = supabase.table("borrower") \
+            .select("id") \
+            .eq("id", user_id).single().execute()
+        return bool(res.data)
+    except Exception:
+        return False
+
+
+# -----------------------------
 # PUT /borrower/loan-update
 # -----------------------------
 def update_loan_info(data):

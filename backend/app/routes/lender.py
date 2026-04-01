@@ -14,6 +14,7 @@ from app.services.lender_services import (
     skip_borrower,
     get_approved_borrowers,
     get_borrower_review_insights,
+    check_lender_onboarding,
 )
 
 router = APIRouter(prefix="/lender", tags=["Lender"])
@@ -110,4 +111,16 @@ def review_insights(lenderId: str, borrowerId: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch borrower review insights"
+        )
+
+
+@router.get("/onboarding-status")
+def onboarding_status(lenderid: str):
+    try:
+        onboarded = check_lender_onboarding(lenderid)
+        return {"onboarded": onboarded}
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check onboarding status"
         )

@@ -30,7 +30,20 @@ const Login = () => {
             };
 
             login(user, data.token);
-            navigate(`/${data.role}/dashboard`);
+
+            // Check if user has completed onboarding
+            try {
+                const onboardingRes = await authService.checkOnboardingStatus(data.userid, data.role);
+                if (onboardingRes.onboarded) {
+                    navigate(`/${data.role}/dashboard`);
+                } else {
+                    navigate(`/${data.role}/onboarding`);
+                }
+            } catch (error) {
+                // If check fails, redirect to onboarding to be safe
+                navigate(`/${data.role}/onboarding`);
+            }
+
             toast.success(`Welcome back, ${data.name}!`);
         } catch (error: any) {
             const msg = error?.response?.data?.detail || 'Invalid credentials.';

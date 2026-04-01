@@ -253,6 +253,10 @@ export const authService = {
         const response = await api.post('/login', credentials);
         return response.data;
     },
+    checkOnboardingStatus: async (userid: string, role: 'borrower' | 'lender'): Promise<{ onboarded: boolean }> => {
+        const response = await api.get(`/${role}/onboarding-status`, { params: { userid } });
+        return response.data;
+    },
     submitBorrowerDetails: async (data: BorrowerDetailsPayload): Promise<Record<string, unknown>> => {
         const response = await api.post('/borrower/details', data);
         return response.data;

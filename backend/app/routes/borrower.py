@@ -22,6 +22,7 @@ from app.services.borrower_services import (
     update_personal_info,
     update_employment_info,
     update_credit_info,
+    check_borrower_onboarding,
     ExplanationServiceError,
 )
 
@@ -208,4 +209,16 @@ def score_insights(userid: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate score insights"
+        )
+
+
+@router.get("/onboarding-status")
+def onboarding_status(userid: str):
+    try:
+        onboarded = check_borrower_onboarding(userid)
+        return {"onboarded": onboarded}
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check onboarding status"
         )

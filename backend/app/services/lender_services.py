@@ -198,6 +198,21 @@ def update_lender_details(data):
 
 
 # -----------------------------
+# GET /lender/onboarding-status
+# Check if lender has completed onboarding
+# Returns True if lender record exists, False otherwise
+# -----------------------------
+def check_lender_onboarding(lender_id: str):
+    try:
+        res = supabase.table("lender") \
+            .select("id") \
+            .eq("id", lender_id).single().execute()
+        return bool(res.data)
+    except Exception:
+        return False
+
+
+# -----------------------------
 # GET /lender/loan-requests?lenderID=X
 # -----------------------------
 def get_loan_requests(lender_id: str):
