@@ -74,8 +74,12 @@ const BorrowerOnboarding = () => {
         if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < selectedDate.getDate())) {
           age -= 1;
         }
-        if (age < 18 || age > 100) {
-          toast.error('Applicant age must be between 18 and 100 years.');
+        if (age < 18) {
+          toast.error('Applicant must be at least 18 years old.');
+          return false;
+        }
+        if (age > 105) {
+          toast.error('Applicant age seems invalid. Please check the date of birth entered.');
           return false;
         }
         if (!states.includes(state)) {

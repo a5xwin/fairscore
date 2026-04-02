@@ -1156,6 +1156,15 @@ def get_credit_score_insights(user_id: str):
 # POST /borrower/details
 # -----------------------------
 def create_borrower_details(data):
+
+    #Age validation for new user onboarding
+    from datetime import datetime
+    dob_date = datetime.strptime(str(data.dob), '%Y-%m-%d')
+    today = datetime.now()
+    age = today.year - dob_date.year - ((today.month, today.day) < (dob_date.month, dob_date.day))
+    if age < 18 or age > 105:
+        raise ValueError("Age must be between 18 and 105")
+
     _invalidate_insights_cache(data.userid)
 
     credit_history_months = to_months(
