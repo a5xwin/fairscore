@@ -6,6 +6,7 @@ import logging
 import json
 import hashlib
 import re
+import time
 from uuid import UUID
 
 
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 _INSIGHTS_CACHE_TABLE = "borrower_score_insights_cache"
 _INSIGHTS_CACHE_MEMORY = {}
+_GEMINI_RATE_LIMIT_UNTIL = 0.0
 
 
 class ExplanationServiceError(Exception):
@@ -208,6 +210,10 @@ def _write_insights_cache(user_id: str, fingerprint: str, reasons_payload=None, 
         logger.debug("Failed to persist insights cache row in Supabase: %s", exc)
 
 
+def _is_fallback_payload(payload):
+    return isinstance(payload, dict) and payload.get("source") == "fallback"
+
+
 def _invalidate_insights_cache(user_id: str):
     _INSIGHTS_CACHE_MEMORY.pop(user_id, None)
 
@@ -286,6 +292,35 @@ def _extract_json_object(text: str):
         return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
+
+
+def _is_gemini_rate_limit_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    return "429" in message and ("quota" in message or "rate limit" in message)
+
+
+def _extract_retry_delay_seconds(exc: Exception, default_seconds: float = 20.0) -> float:
+    message = str(exc or "")
+
+    match = re.search(r"retry\s+in\s+([0-9]+(?:\.[0-9]+)?)s", message, flags=re.IGNORECASE)
+    if match:
+        return max(float(match.group(1)), 1.0)
+
+    match = re.search(r"retry_delay\s*\{[^}]*seconds\s*:\s*([0-9]+)", message, flags=re.IGNORECASE)
+    if match:
+        return max(float(match.group(1)), 1.0)
+
+    return default_seconds
+
+
+def _set_gemini_rate_limit_backoff(exc: Exception):
+    global _GEMINI_RATE_LIMIT_UNTIL
+    delay = _extract_retry_delay_seconds(exc)
+    _GEMINI_RATE_LIMIT_UNTIL = max(_GEMINI_RATE_LIMIT_UNTIL, time.time() + delay)
+
+
+def _gemini_rate_limited_now() -> bool:
+    return time.time() < _GEMINI_RATE_LIMIT_UNTIL
 
 
 def _fallback_humanize_lime_rule(rule_text: str):
@@ -557,7 +592,7 @@ def _build_combined_score_reasons(shap_factors, lime_rules):
 
 
 def _build_score_reasons_with_gemini(base_reasons_payload, prediction_data, api_key: str):
-    if not api_key:
+    if not api_key or _gemini_rate_limited_now():
         return None
 
     try:
@@ -639,12 +674,14 @@ def _build_score_reasons_with_gemini(base_reasons_payload, prediction_data, api_
             "combinedReasons": cleaned_reasons[:6],
         }
     except Exception as exc:
+        if _is_gemini_rate_limit_error(exc):
+            _set_gemini_rate_limit_backoff(exc)
         logger.warning("Gemini reason synthesis failed, using fallback reasons: %s", exc)
         return None
 
 
 def _simplify_lime_rules_with_gemini(rules, prediction_data, api_key: str):
-    if not api_key or not rules:
+    if not api_key or not rules or _gemini_rate_limited_now():
         return []
 
     try:
@@ -701,6 +738,8 @@ def _simplify_lime_rules_with_gemini(rules, prediction_data, api_key: str):
 
         return normalized
     except Exception as exc:
+        if _is_gemini_rate_limit_error(exc):
+            _set_gemini_rate_limit_backoff(exc)
         logger.warning("Gemini LIME simplification failed: %s", exc)
         return []
 
@@ -979,7 +1018,7 @@ def get_score_reasons(user_id: str):
 
         if cached and cached.get("profile_fingerprint") == fingerprint:
             cached_reasons = cached.get("reasons_payload")
-            if isinstance(cached_reasons, dict) and cached_reasons.get("section") == "reason_for_score":
+            if isinstance(cached_reasons, dict) and cached_reasons.get("section") == "reason_for_score" and not _is_fallback_payload(cached_reasons):
                 return cached_reasons
 
         raw_shap = _credit_predictor.explain_prediction_shap(data)
@@ -987,7 +1026,9 @@ def get_score_reasons(user_id: str):
 
         raw_lime = _credit_predictor.explain_prediction_lime(data)
         api_key = os.getenv("GEMINI_API_KEY", "")
-        lime_response = _format_lime_response(raw_lime, prediction_data=data, api_key=api_key)
+        # Keep LIME conversion local/fallback to preserve Gemini request budget
+        # for reason synthesis and personalized advice generation.
+        lime_response = _format_lime_response(raw_lime, prediction_data=data, api_key="")
         fallback_combined = _build_combined_score_reasons(
             shap_response.get("topFactors", []),
             lime_response.get("rules", []),
@@ -1020,7 +1061,7 @@ def get_score_reasons(user_id: str):
             user_id,
             fingerprint,
             reasons_payload=reasons_payload,
-            advice_payload=(cached or {}).get("advice_payload") if cached and cached.get("profile_fingerprint") == fingerprint else None,
+            advice_payload=(cached or {}).get("advice_payload") if cached and cached.get("profile_fingerprint") == fingerprint and not _is_fallback_payload((cached or {}).get("advice_payload")) else None,
         )
         return reasons_payload
     except ExplanationServiceError:
@@ -1074,6 +1115,15 @@ def get_gemini_advice(user_id: str):
                 "improvementTips": tips,
             }
 
+        if _gemini_rate_limited_now():
+            tips = _build_fallback_advice(data, shap_response, lime_response)
+            return {
+                "prediction": shap_response.get("prediction") or lime_response.get("prediction") or 0.0,
+                "advice": "AI advice is temporarily rate-limited. Showing practical recommendations based on your profile.",
+                "source": "fallback",
+                "improvementTips": tips,
+            }
+
         try:
             gemini_result = _credit_predictor.get_credit_improvement_advice(
                 data,
@@ -1094,6 +1144,8 @@ def get_gemini_advice(user_id: str):
                 "improvementTips": tips,
             }
         except Exception as exc:
+            if _is_gemini_rate_limit_error(exc):
+                _set_gemini_rate_limit_backoff(exc)
             logger.warning("Gemini advice generation failed: %s", exc)
             tips = _build_fallback_advice(data, shap_response, lime_response)
             return {
@@ -1117,7 +1169,7 @@ def get_score_advice(user_id: str):
 
         if cached and cached.get("profile_fingerprint") == fingerprint:
             cached_advice = cached.get("advice_payload")
-            if isinstance(cached_advice, dict) and cached_advice.get("section") == "improvement_advice":
+            if isinstance(cached_advice, dict) and cached_advice.get("section") == "improvement_advice" and not _is_fallback_payload(cached_advice):
                 return cached_advice
 
         advice_response = get_gemini_advice(user_id)

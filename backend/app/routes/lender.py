@@ -115,10 +115,19 @@ def review_insights(lenderId: str, borrowerId: str):
 
 
 @router.get("/onboarding-status")
-def onboarding_status(lenderid: str):
+def onboarding_status(userid: str = "", lenderid: str = ""):
     try:
-        onboarded = check_lender_onboarding(lenderid)
+        user_id = userid or lenderid
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="userid is required"
+            )
+
+        onboarded = check_lender_onboarding(user_id)
         return {"onboarded": onboarded}
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -469,11 +469,15 @@ class CreditScorePredictor:
         }
 
         if prediction >= score_threshold:
-            return {
-                'prediction': float(prediction),
-                'advice': 'Score is not poor. No improvement advice requested.',
-                'payload_sent': payload
-            }
+            advice_goal = (
+                "The score is already healthy, so focus on maintaining the profile and preventing regression. "
+                "Suggest practical habits that preserve the score and strengthen it further."
+            )
+        else:
+            advice_goal = (
+                "The score is below the target, so suggest 3-7 practical actions that can improve the score. "
+                "Prioritize the most actionable steps and reference the negative SHAP factors."
+            )
 
         import google.generativeai as genai
 
@@ -482,8 +486,7 @@ class CreditScorePredictor:
 
         prompt = (
             "You are a credit risk advisor. Given the prediction and SHAP factors, "
-            "suggest 3-7 practical actions to improve the credit score. "
-            "Prioritize actionable steps and reference the negative SHAP factors. "
+            f"{advice_goal} "
             "Keep the response concise and avoid legal or financial guarantees.\n\n"
             f"Input data: {payload['features']}\n"
             f"Predicted score: {payload['prediction']} (threshold {payload['score_threshold']})\n"

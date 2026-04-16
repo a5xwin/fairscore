@@ -142,14 +142,14 @@ def validate_lending_limits(capacity: float, loan_amount_from: float, loan_amoun
 def create_lender_details(data):
     validate_lending_limits(data.capacity, data.loanAmountFrom, data.loanAmountTo, data.interest)
 
-    supabase.table("lender").insert({
+    supabase.table("lender").upsert({
         "id": data.lenderId,
         "type": data.type,
         "capacity": data.capacity,
         "loan_amount_from": data.loanAmountFrom,
         "loan_amount_to": data.loanAmountTo,
         "interest": data.interest
-    }).execute()
+    }, on_conflict="id").execute()
 
     return {"status": "success"}
 
