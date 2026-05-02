@@ -71,6 +71,17 @@ const LoanForm = () => {
       return;
     }
 
+    // Validate credit history length
+    const maxCreditHistoryMonths = (age - 18) * 12;
+    if (formData.creditHistoryLength > maxCreditHistoryMonths) {
+      toast({
+        title: "Invalid Credit History",
+        description: `At age ${age}, your maximum credit history can be ${maxCreditHistoryMonths} months (${(maxCreditHistoryMonths / 12).toFixed(1)} years). Please adjust accordingly.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     // Validate income
     const income = parseFloat(formData.income);
     if (isNaN(income) || income < 0) {
